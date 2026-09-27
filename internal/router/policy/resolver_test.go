@@ -241,6 +241,50 @@ func TestResolverKeepsOverflowAdmittedModels(t *testing.T) {
 	}}, resolved.Diagnostics)
 }
 
+func TestResolverPreservesUnsignedHistoryExclusionAfterOverflowAdmission(t *testing.T) {
+	const model = "gemini-3.1-pro-preview"
+	resolver := policy.NewResolver(
+		set(model),
+		set(providers.ProviderGoogle),
+		catalogRosterID,
+		policy.ManagedProviderPolicy(),
+	)
+
+	resolved := resolver.Resolve(router.Request{
+		ExcludedModels:                set(model),
+		OverflowAdmittedModels:        set(model),
+		UnsignedHistoryExcludedModels: set(model),
+	})
+
+	assert.Empty(t, resolved.Candidates)
+	assert.Equal(t, []policy.Diagnostic{{
+		CatalogID: model,
+		RosterID:  model,
+		Reason:    policy.ExclusionUnsignedHistory,
+	}}, resolved.Diagnostics)
+}
+
+func TestResolverDoesNotCallUnmappedOverflowCandidateAContextExclusion(t *testing.T) {
+	const model = "gemini-3.1-pro-preview"
+	resolver := policy.NewResolver(
+		set(model),
+		set(providers.ProviderGoogle),
+		func(catalog.Model) string { return "" },
+		policy.ManagedProviderPolicy(),
+	)
+
+	resolved := resolver.Resolve(router.Request{
+		ExcludedModels:              set(model),
+		ContextWindowExcludedModels: set(model),
+	})
+
+	assert.Empty(t, resolved.Candidates)
+	assert.Equal(t, []policy.Diagnostic{{
+		CatalogID: model,
+		Reason:    policy.ExclusionUnmappedRoster,
+	}}, resolved.Diagnostics)
+}
+
 func TestResolverIncludesLiveCandidateEconomics(t *testing.T) {
 	resolver := policy.NewResolver(
 		set("claude-opus-4-8"),

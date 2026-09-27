@@ -186,6 +186,9 @@ type Request struct {
 	// A /force-model pin on one of these is still dispatched, so the provider's
 	// exact token count decides instead of the estimate.
 	ContextWindowExcludedModels map[string]struct{}
+	// UnsignedHistoryExcludedModels holds models excluded because they cannot
+	// accept this request's unsigned tool-call history.
+	UnsignedHistoryExcludedModels map[string]struct{}
 	// OverflowAdmittedModels is the set the context-window pre-filter kept
 	// when its byte estimate ruled out every model: the widest-window ones,
 	// sent anyway so the provider's exact count decides and a real overflow

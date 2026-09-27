@@ -370,7 +370,7 @@ func (r *SidecarRouter) Route(ctx context.Context, req router.Request) (router.D
 		observability.FromContext(ctx).Error("Policy router resolved no eligible candidate",
 			append([]any{"strategy", strategy}, candidateLogFields(resolved)...)...)
 		return router.Decision{}, fmt.Errorf("%s: no eligible candidate: %w: %w",
-			strategy, emptyCandidateError(req, resolved.Diagnostics), r.config.Unavailable)
+			strategy, emptyCandidateError(resolved.Diagnostics), r.config.Unavailable)
 	}
 	requestRouteID := uuid.NewString()
 	pin, pinned := router.HonouredPolicyPin(ctx)
@@ -699,7 +699,7 @@ func (r *SidecarRouter) RouteWithoutUserText(ctx context.Context, req router.Req
 	}
 	resolved := r.resolver.Resolve(req)
 	if len(resolved.Candidates) == 0 {
-		return router.Decision{}, fmt.Errorf("%s: no eligible candidate for unscorable turn: %w", r.config.Strategy, emptyCandidateError(req, resolved.Diagnostics))
+		return router.Decision{}, fmt.Errorf("%s: no eligible candidate for unscorable turn: %w", r.config.Strategy, emptyCandidateError(resolved.Diagnostics))
 	}
 	input := selectionInputFor(r.config.Strategy, ExecutionModeServing, req, Result{}, resolved)
 	input.Unscorable = true

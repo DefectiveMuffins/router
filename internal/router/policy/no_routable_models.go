@@ -6,8 +6,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-
-	"weave-os/router/internal/router"
 )
 
 // ErrNoRoutableModels signals that resolution came back empty due to the
@@ -26,14 +24,14 @@ var ErrContextWindowExceeded = errors.New("policy: request context exceeds every
 
 // emptyCandidateError names why resolution produced no candidate, so the
 // caller reports the configuration that has to change rather than a generic
-// routing failure. A pool emptied even partly by size is a size problem: the
-// proxy only admits models on total overflow, and a model dropped for its
-// window would serve a smaller request.
-func emptyCandidateError(req router.Request, diagnostics []Diagnostic) error {
+// routing failure. Only a model diagnosed as excluded by size makes this a
+// context-window error; later request constraints can still empty an
+// overflow-admitted pool for an unrelated reason.
+func emptyCandidateError(diagnostics []Diagnostic) error {
 	if len(diagnostics) > 0 && !slices.ContainsFunc(diagnostics, func(d Diagnostic) bool { return d.Reason != ExclusionGatewayNotServed }) {
 		return ErrGatewayServesNoDeployedModel
 	}
-	if len(req.OverflowAdmittedModels) > 0 || slices.ContainsFunc(diagnostics, func(d Diagnostic) bool { return d.Reason == ExclusionContextWindow }) {
+	if slices.ContainsFunc(diagnostics, func(d Diagnostic) bool { return d.Reason == ExclusionContextWindow }) {
 		return ErrContextWindowExceeded
 	}
 	return ErrNoRoutableModels
