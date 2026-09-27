@@ -245,6 +245,24 @@ func TestRoutingTargetSet_AcceptsAnyRegisteredFallbackBinding(t *testing.T) {
 	assert.NotContains(t, targets, "gpt-5.6-terra", "models with no registered binding stay unavailable")
 }
 
+func TestResolveBinding_UsesFireworksForTogetherDedicatedEndpointModels(t *testing.T) {
+	for _, id := range []string{
+		"deepseek/deepseek-v4-pro",
+		"deepseek/deepseek-v4-pro-0813",
+		"moonshotai/kimi-k2.7",
+		"z-ai/glm-5.1",
+	} {
+		t.Run(id, func(t *testing.T) {
+			_, ok := ResolveBinding(id, map[string]struct{}{providers.ProviderTogether: {}})
+			assert.False(t, ok, "model must not resolve through an unavailable binding")
+
+			binding, ok := ResolveBinding(id, map[string]struct{}{providers.ProviderFireworks: {}})
+			require.True(t, ok, "Fireworks remains a routable binding")
+			assert.Equal(t, providers.ProviderFireworks, binding.Provider)
+		})
+	}
+}
+
 func TestHMMRoutingTargetSetIncludesHMMOnlyTargets(t *testing.T) {
 	available := map[string]struct{}{providers.ProviderOpenAI: {}}
 	genericTargets := RoutingTargetSet(available)

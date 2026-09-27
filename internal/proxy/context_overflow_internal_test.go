@@ -123,10 +123,9 @@ func TestShouldEnableExtendedContext(t *testing.T) {
 	assert.True(t, shouldEnableExtendedContext(180_000, 8_000), "near-200K request opts into 1M")
 }
 
-// TestExcludeContextOverflowModels_MultiBindingMinWindow: Together (512K primary)
-// plus Fireworks (1M fallback) — pre-filter must use MIN because primary dispatches
-// first; a 610K request cannot rely on the 1M fallback to avoid a hard-400.
-func TestExcludeContextOverflowModels_MultiBindingMinWindow(t *testing.T) {
+// TestExcludeContextOverflowModels_UsesRoutableBinding verifies the first
+// available catalog binding supplies the context window.
+func TestExcludeContextOverflowModels_UsesRoutableBinding(t *testing.T) {
 	available := map[string]struct{}{
 		"deepseek/deepseek-v4-pro-0813": {},
 	}
@@ -134,34 +133,24 @@ func TestExcludeContextOverflowModels_MultiBindingMinWindow(t *testing.T) {
 		providers.ProviderTogether:  {},
 		providers.ProviderFireworks: {},
 	}
-	enabledTogetherOnly := map[string]struct{}{
-		providers.ProviderTogether: {},
-	}
 	enabledFireworksOnly := map[string]struct{}{
 		providers.ProviderFireworks: {},
 	}
 
-	// 610016 = the exact overflow estimate from the failing session + 64K reserve.
-	// Together (512K) < needed => excluded; Fireworks (1M) > needed => safe.
+	// 546016 + 64K reserve is below Fireworks' 1M served window, so the
+	// provider's old Together 512K limit must not exclude the model.
 	outBoth, overflowedBoth := excludeContextOverflowModels(546_016, 0, 64_000, enabledBoth, nil, available)
-	assert.Contains(t, overflowedBoth, "deepseek/deepseek-v4-pro-0813",
-		"Together 512K primary binding must exclude the model when both are keyed")
-	assert.Contains(t, outBoth, "deepseek/deepseek-v4-pro-0813", "model must be in the exclusion map")
+	assert.NotContains(t, overflowedBoth, "deepseek/deepseek-v4-pro-0813")
+	assert.NotContains(t, outBoth, "deepseek/deepseek-v4-pro-0813")
 
-	// Together-only deploy: excluded.
-	_, overflowedTogether := excludeContextOverflowModels(546_016, 0, 64_000, enabledTogetherOnly, nil, available)
-	assert.Contains(t, overflowedTogether, "deepseek/deepseek-v4-pro-0813",
-		"Together-only deploy must exclude at 610K (512K window)")
-
-	// Fireworks-only deploy: NOT excluded (genuinely serves 1M).
 	_, overflowedFireworks := excludeContextOverflowModels(546_016, 0, 64_000, enabledFireworksOnly, nil, available)
 	assert.NotContains(t, overflowedFireworks, "deepseek/deepseek-v4-pro-0813",
-		"Fireworks-only deploy must not exclude at 610K (1M window)")
+		"Fireworks serves the 1M window")
 
-	// nil enabledProviders: passes through to model-level (1M), NOT excluded.
+	// nil enabledProviders retains legacy model-level behavior.
 	_, overflowedNil := excludeContextOverflowModels(546_016, 0, 64_000, nil, nil, available)
 	assert.NotContains(t, overflowedNil, "deepseek/deepseek-v4-pro-0813",
-		"nil enabledProviders retains legacy model-level behavior")
+		"the catalog model-level window is 1M")
 }
 
 // TestAdmitWidestOnTotalOverflow pins the no-router-compaction contract: an

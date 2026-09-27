@@ -628,10 +628,6 @@ var Models = []Model{
 	// This bare alias is the OLD 0423 release; the routable one is the dated
 	// 0813 entry below, which is what AA actually benchmarks.
 	{ID: "deepseek/deepseek-v4-pro", Source: SourceOpenSource, ContextWindow: 1_048_576, ImageInput: ImageInputUnsupported, Providers: []ProviderBinding{
-		// Together is primary: same $1.74/$3.48 as Fireworks with #1 AA
-		// throughput (~209 t/s vs ~120). Together serves only 512K context.
-		{Provider: providers.ProviderTogether, UpstreamID: "deepseek-ai/DeepSeek-V4-Pro",
-			ContextWindow: 512_000, Price: Pricing{InputUSDPer1M: 1.740, OutputUSDPer1M: 3.480, CacheReadMultiplier: 0.20 / 1.740}},
 		{Provider: providers.ProviderFireworks, UpstreamID: "accounts/fireworks/models/deepseek-v4-pro",
 			Price: Pricing{InputUSDPer1M: 1.740, OutputUSDPer1M: 3.480, CacheReadMultiplier: 0.0862}},
 		{Provider: providers.ProviderOpenRouter, Price: Pricing{InputUSDPer1M: 0.435, OutputUSDPer1M: 0.870, CacheReadMultiplier: 0.10}},
@@ -642,9 +638,6 @@ var Models = []Model{
 	// above resolves to the retired 0423 build, so the HMM roster must target
 	// this dated ID to route to what it was actually ranked on.
 	{ID: "deepseek/deepseek-v4-pro-0813", Source: SourceOpenSource, Tier: TierMid, ContextWindow: 1_048_576, ImageInput: ImageInputUnsupported, Providers: []ProviderBinding{
-		// Together first: higher throughput (~209 t/s vs Fireworks ~120) at equal price. Together serves only 512K context.
-		{Provider: providers.ProviderTogether, UpstreamID: "deepseek-ai/DeepSeek-V4-Pro",
-			ContextWindow: 512_000, Price: Pricing{InputUSDPer1M: 1.740, OutputUSDPer1M: 3.480, CacheReadMultiplier: 0.20 / 1.740}},
 		{Provider: providers.ProviderFireworks, UpstreamID: "accounts/fireworks/models/deepseek-v4-pro",
 			Price: Pricing{InputUSDPer1M: 1.740, OutputUSDPer1M: 3.480, CacheReadMultiplier: 0.0862}},
 		{Provider: providers.ProviderOpenRouter, Price: Pricing{InputUSDPer1M: 0.660, OutputUSDPer1M: 1.980, CacheReadMultiplier: 0.022 / 0.660}},
@@ -660,19 +653,15 @@ var Models = []Model{
 		{Provider: providers.ProviderOpenRouter, Price: Pricing{InputUSDPer1M: 0.950, OutputUSDPer1M: 4.000, CacheReadMultiplier: 0.10}},
 	}},
 	// kimi-k2.7 "Code" variant: same rates as k2.6, ~30% less thinking-token
-	// usage. Fireworks primary; Together added as a cross-provider fallback
-	// (identical $0.95/$4.00 list price) so a Fireworks outage fails over
-	// instead of hard-killing the turn — the binding previously stood alone.
+	// usage.
 	{ID: "moonshotai/kimi-k2.7", Source: SourceOpenSource, Tier: TierHigh, ContextWindow: 262_144, ImageInput: ImageInputUnsupported, Providers: []ProviderBinding{
 		{Provider: providers.ProviderFireworks, UpstreamID: "accounts/fireworks/models/kimi-k2p7-code",
-			Price: Pricing{InputUSDPer1M: 0.950, OutputUSDPer1M: 4.000, CacheReadMultiplier: 0.20}},
-		{Provider: providers.ProviderTogether, UpstreamID: "moonshotai/Kimi-K2.7-Code",
 			Price: Pricing{InputUSDPer1M: 0.950, OutputUSDPer1M: 4.000, CacheReadMultiplier: 0.20}},
 	}},
 	// kimi-k3 is a separate price class from k2.7 ($3/$15 vs $0.95/$4), not its
 	// successor — both stay routable. First multimodal Kimi, so unlike k2.5-k2.7
-	// it carries no ImageInputUnsupported. Together has no K3 endpoint yet, so
-	// OpenRouter (identical list price) is the outage fallback.
+	// it carries no ImageInputUnsupported. OpenRouter is the outage fallback at
+	// the same list price.
 	{ID: "moonshotai/kimi-k3", Source: SourceOpenSource, Tier: TierHigh, ContextWindow: 1_048_576, Providers: []ProviderBinding{
 		{Provider: providers.ProviderFireworks, UpstreamID: "accounts/fireworks/models/kimi-k3",
 			Price: Pricing{InputUSDPer1M: 3.000, OutputUSDPer1M: 15.000, CacheReadMultiplier: 0.10}},
@@ -733,10 +722,6 @@ var Models = []Model{
 	// GLM-5.1 ships the streaming tool-call fix GLM-5 lacks (tool_stream=true);
 	// emit_openai injects tool_stream + disables thinking for this slug.
 	{ID: "z-ai/glm-5.1", Source: SourceOpenSource, Tier: TierHigh, ContextWindow: 202_752, ImageInput: ImageInputUnsupported, Providers: []ProviderBinding{
-		// Together edges out Fireworks: AA ranks it #1 in throughput (~213 t/s
-		// vs ~180) and TTFT, at the same $1.40/$4.40 list price.
-		{Provider: providers.ProviderTogether, UpstreamID: "zai-org/GLM-5.1",
-			Price: Pricing{InputUSDPer1M: 1.400, OutputUSDPer1M: 4.400, CacheReadMultiplier: 0.26 / 1.400}},
 		{Provider: providers.ProviderFireworks, UpstreamID: "accounts/fireworks/models/glm-5p1",
 			Price: Pricing{InputUSDPer1M: 1.400, OutputUSDPer1M: 4.400, CacheReadMultiplier: 0.26 / 1.40}},
 		{Provider: providers.ProviderOpenRouter, Price: Pricing{InputUSDPer1M: 0.980, OutputUSDPer1M: 3.080, CacheReadMultiplier: 0.18 / 0.98}},
@@ -805,8 +790,8 @@ var Models = []Model{
 		{Provider: providers.ProviderFireworks, UpstreamID: "accounts/fireworks/models/qwen3p7-plus",
 			Price: Pricing{InputUSDPer1M: 0.400, OutputUSDPer1M: 1.600, CacheReadMultiplier: 0.20}},
 	}},
-	// Fireworks-only: SOC-2 compliance; OpenRouter's/Together's routes forward to
-	// Alibaba/DashScope. Fireworks caps at 131069, not the 1M in model docs:
+	// Fireworks-only for SOC-2 compliance. Fireworks caps at 131069, not the
+	// 1M in model docs:
 	// prod 400s "The prompt is too long ... model maximum context length: 131069".
 	{ID: "qwen/qwen3.8-max", Source: SourceOpenSource, Tier: TierHigh, ContextWindow: 131_072, Providers: []ProviderBinding{
 		{Provider: providers.ProviderFireworks, UpstreamID: "accounts/fireworks/models/qwen3p8-max",
