@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"bytes"
 	"net/http"
 
 	"weave-os/router/internal/providers"
@@ -38,13 +39,13 @@ func responsesErrorEventFailure(data []byte) (errType, msg string) {
 func responsesSSEFailure(b []byte) (errType, msg string, found bool) {
 	rest := b
 	for {
-		event, n := sse.SplitNext(rest)
+		event, n := splitBufferedResponsesEvent(rest)
 		if n == 0 {
 			return "", "", false
 		}
 		rest = rest[n:]
 		_, data := sse.ParseEvent(event)
-		if len(data) == 0 {
+		if len(data) == 0 || !gjson.ValidBytes(data) {
 			continue
 		}
 		switch gjson.GetBytes(data, "type").String() {
@@ -83,4 +84,16 @@ func bufferedContextOverflow(b []byte, body func(errType, msg string) []byte) er
 		return nil
 	}
 	return &providers.UpstreamErrorResponse{Status: http.StatusBadRequest, Body: body(errType, msg)}
+}
+
+// splitBufferedResponsesEvent includes an unterminated final SSE event because
+// the caller has the complete buffered response body.
+func splitBufferedResponsesEvent(buf []byte) (event []byte, n int) {
+	if event, n = sse.SplitNext(buf); n != 0 {
+		return event, n
+	}
+	if len(bytes.TrimSpace(buf)) == 0 {
+		return nil, 0
+	}
+	return buf, len(buf)
 }

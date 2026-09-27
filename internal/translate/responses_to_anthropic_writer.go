@@ -924,13 +924,13 @@ func extractFinalResponseObject(sseBytes []byte) []byte {
 	var out []byte
 	rest := sseBytes
 	for {
-		event, n := sse.SplitNext(rest)
+		event, n := splitBufferedResponsesEvent(rest)
 		if n == 0 {
 			break
 		}
 		rest = rest[n:]
 		_, data := sse.ParseEvent(event)
-		if len(data) == 0 {
+		if len(data) == 0 || !gjson.ValidBytes(data) {
 			continue
 		}
 		switch gjson.GetBytes(data, "type").String() {

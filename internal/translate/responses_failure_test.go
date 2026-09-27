@@ -107,3 +107,36 @@ data: {"type":"error","error":{"type":"server_error","code":"server_error","mess
 		})
 	}
 }
+
+func TestResponsesTranslators_BufferedOverflowAtEOFIsA400Rejection(t *testing.T) {
+	const stream = `event: response.created
+data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress","output":[]}}
+
+event: response.failed
+data: {"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"code":"context_length_exceeded","message":"Your input exceeds the context window."},"output":[]}}`
+	for name, newWriter := range responsesTranslators {
+		t.Run(name, func(t *testing.T) {
+			_, err := translateStream(t, newWriter, false, stream)
+
+			var rejection *providers.UpstreamErrorResponse
+			require.ErrorAs(t, err, &rejection)
+			assert.Equal(t, http.StatusBadRequest, rejection.Status)
+			assert.Equal(t, "context_length_exceeded", gjson.GetBytes(rejection.Body, "error.type").String())
+			assert.Contains(t, gjson.GetBytes(rejection.Body, "error.message").String(), "exceeds the context window")
+		})
+	}
+}
+
+func TestResponsesTranslators_BufferedInvalidTailIsNotOverflow(t *testing.T) {
+	const stream = `event: response.failed
+data: {"type":"response.failed","response":{"error":{"code":"context_length_exceeded"}`
+	for name, newWriter := range responsesTranslators {
+		t.Run(name, func(t *testing.T) {
+			rec, err := translateStream(t, newWriter, false, stream)
+
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusBadGateway, rec.Code)
+			assert.NotContains(t, rec.Body.String(), "context_length_exceeded")
+		})
+	}
+}
