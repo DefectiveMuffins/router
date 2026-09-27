@@ -249,7 +249,7 @@ func TestRecordTurnUsage_PassthroughDoesNotReadOrWritePins(t *testing.T) {
 		Decision:                   router.Decision{Provider: providers.ProviderAnthropic, Model: "claude-sonnet-4-6"},
 		SessionKey:                 sessionKey,
 		PinRole:                    sessionpin.DefaultRole,
-		BlindExperimentPassthrough: true,
+		CallerModelPassthrough: true,
 	}, providers.ProviderAnthropic, "claude-sonnet-4-6", 1200, 80, 200, 900, false)
 
 	store.mu.Lock()

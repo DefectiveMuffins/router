@@ -235,6 +235,19 @@ type RouterInstallationProfileAssignment struct {
 	UpdatedAt            pgtype.Timestamptz
 }
 
+type RouterInstallationRoutingAssignment struct {
+	InstallationID uuid.UUID
+	RouterUserID   uuid.UUID
+	Revision       int64
+}
+
+type RouterInstallationRoutingPolicy struct {
+	InstallationID uuid.UUID
+	Mode           string
+	Revision       int64
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type RouterLlmEscalationCompletion struct {
 	Lifetime uuid.UUID
 	Boundary []byte

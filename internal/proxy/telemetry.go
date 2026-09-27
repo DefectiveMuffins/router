@@ -364,7 +364,7 @@ func applyBlindExperimentTelemetry(ctx context.Context, params *InsertTelemetryP
 		case routed.HardPinned:
 			params.CohortBypassReason = auth.CohortBypassHardPin
 		case state.Arm == auth.BlindExperimentArmPassthrough:
-			applied = routed.BlindExperimentPassthrough
+			applied = routed.CallerModelPassthrough
 			if !applied {
 				params.CohortBypassReason = auth.CohortBypassNotDispatched
 			}

@@ -86,6 +86,13 @@ func withAPIKey(svc *auth.Service, byokRequiresOptIn bool) gin.HandlerFunc {
 		c.Set(ctxKeyInstallation, installation)
 		c.Set(ctxKeyAPIKey, apiKey)
 		ctx := authCtx
+		ctx, err = svc.WithRoutingPolicy(ctx, installation.ID)
+		if err != nil {
+			observability.FromContext(ctx).Error("Failed to load installation routing policy", "installation_id", installation.ID, "err", err)
+			finishAuthSpan(authSpan, err)
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "routing_policy_unavailable"})
+			return
+		}
 		if apiKey != nil {
 			ctx = context.WithValue(ctx, proxy.APIKeyIDContextKey{}, apiKey.ID)
 			ctx = proxy.WithManagedSubscriptionUsage(ctx)

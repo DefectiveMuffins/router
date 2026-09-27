@@ -701,11 +701,11 @@ func TestSubscriptionFailoverParity_RescueDispatch(t *testing.T) {
 	}
 }
 
-// TestSubscriptionFailoverParity_BlindExperimentPassthrough pins D9: the Codex
+// TestSubscriptionFailoverParity_CallerModelPassthrough pins D9: the Codex
 // rescue is gated out for a blind-experiment passthrough turn, the Anthropic one
 // is not. A rescue changes the credential, not the model, so the two ingresses
 // disagree about whether that invalidates an experiment arm.
-func TestSubscriptionFailoverParity_BlindExperimentPassthrough(t *testing.T) {
+func TestSubscriptionFailoverParity_CallerModelPassthrough(t *testing.T) {
 	wantPaid := map[string]int{"anthropic": 1, "codex": 0}
 	for _, in := range parityIngresses() {
 		t.Run(in.name, func(t *testing.T) {

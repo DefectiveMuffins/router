@@ -2875,6 +2875,9 @@ func (s *Service) routeFor(ctx context.Context, req router.Request) (router.Deci
 	if err != nil {
 		return router.Decision{}, err
 	}
+	if auth.RoutingPassthroughFrom(ctx) {
+		return s.callerModelPassthroughDecision(ctx, req)
+	}
 	req = s.withPolicyRequestContext(ctx, req)
 	strategy := router.StrategyFromContext(ctx)
 	return s.routeWithStrategy(ctx, strategy, req)
@@ -3585,7 +3588,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 
 	// Wide cyclic re-read loop (same few files, no edits, dozens of turns) on a
 	// cheap/mid model escalates the session to opus.
-	if !agentShadowMode && !blindExperimentPassthroughActive(ctx) && handoffFromContext(ctx) == nil {
+	if !agentShadowMode && !callerModelPassthroughActive(ctx) && handoffFromContext(ctx) == nil {
 		if cyc, csig, ccount, cratio, cwin := detectCyclicToolCallLoop(env); cyc {
 			loopRole := roleForTier(catalog.TierFor(feats.Model))
 			s.handleLoopEscalation(ctx, csig, ccount, cratio, cwin, installationID, sessionKey, loopRole, feats.Model, forceModelSessionKey)
@@ -3817,7 +3820,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 	// Gated to tool-bearing turns so a frozen marker + frozen prompt prefix
 	// can't collide on healthy text-only turns.
 	toolBearingTurn := inboundToolCallCount > 0 || inboundLastUser.HasToolResult
-	if !agentShadowMode && !routeRes.BlindExperimentPassthrough && !routeRes.AuthoritativePerTurn && toolBearingTurn && s.noProgress != nil {
+	if !agentShadowMode && !routeRes.CallerModelPassthrough && !routeRes.AuthoritativePerTurn && toolBearingTurn && s.noProgress != nil {
 		fp := computeNoProgressFingerprint(decision, promptText, feats.MessageCount, toolProgressMarker(env))
 		role := roleForTier(catalog.TierFor(feats.Model))
 		if looped, count := s.noProgress.recordAndDetect(routeRes.SessionKey, installationID, role, fp, time.Now()); looped {
@@ -3827,7 +3830,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 
 	// Text-repetition break: fresh tool calls each turn defeat the no-progress
 	// fingerprint; repeated narration is the durable tell. See text_repetition.go.
-	if !agentShadowMode && !routeRes.BlindExperimentPassthrough && !routeRes.AuthoritativePerTurn && s.ResolveTextRepetitionBreakEnabled(ctx) && (turntype.DetectFromEnvelope(env, feats, "") == turntype.MainLoop || turntype.DetectFromEnvelope(env, feats, "") == turntype.ToolResult) {
+	if !agentShadowMode && !routeRes.CallerModelPassthrough && !routeRes.AuthoritativePerTurn && s.ResolveTextRepetitionBreakEnabled(ctx) && (turntype.DetectFromEnvelope(env, feats, "") == turntype.MainLoop || turntype.DetectFromEnvelope(env, feats, "") == turntype.ToolResult) {
 		if looped, count, sampleHash := detectTextRepetition(env); looped {
 			role := roleForTier(catalog.TierFor(feats.Model))
 			return s.handleTextRepetitionBreak(ctx, w, env, count, sampleHash, installationID, routeRes.SessionKey, role, decision.Model, decision.Provider, feats.Tokens)
@@ -3868,7 +3871,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 	}
 
 	clientRecoveryApplied := false
-	if !agentShadowMode && !blindExperimentPassthroughActive(ctx) {
+	if !agentShadowMode && !callerModelPassthroughActive(ctx) {
 		var recoveryErr error
 		clientRecoveryApplied, recoveryErr = applyClientCompactionRecovery(ctx, env, clientBudget, tt, req.ConversationMessages)
 		if recoveryErr != nil {
@@ -4458,7 +4461,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 	// baselineViable omits authoritative-per-turn: that contract governs which
 	// model the policy picks, not whether a provably-unservable request can be rescued.
 	baselineViable := !agentShadowMode &&
-		!routeRes.BlindExperimentPassthrough &&
+		!routeRes.CallerModelPassthrough &&
 		decision.Reason != translate.ReasonUserForceModel &&
 		s.shouldFailover(ctx) &&
 		!anthropicExcluded &&
@@ -4503,7 +4506,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 	siblingViable := s.ResolveSiblingFailover(ctx) &&
 		len(siblingDecisions) > 0 &&
 		!agentShadowMode &&
-		!routeRes.BlindExperimentPassthrough &&
+		!routeRes.CallerModelPassthrough &&
 		decision.Reason != translate.ReasonUserForceModel &&
 		(s.shouldFailover(ctx) || s.gatewaySiblingAllowed(ctx, siblingDecisions[0])) &&
 		!paidFallbackForbidden(ctx)
@@ -5157,7 +5160,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 	armDemoted := ""
 	rescuedArmDemoted := ""
 	var rescuedArmDemotionReason sessionpin.DemotionReason
-	if !agentShadowMode && !routeRes.BlindExperimentPassthrough {
+	if !agentShadowMode && !routeRes.CallerModelPassthrough {
 		s.maybeEvictPinAfterUpstreamErr(ctx, stickyHit, proxyErr, decision.Reason, installationID, routeRes.SessionKey, stickyStateRole(routeRes))
 
 		// A committed stream that died upstream cost a whole turn and could not
@@ -5400,7 +5403,7 @@ func (s *Service) logPlannerOutcome(ctx context.Context, res turnLoopResult) {
 }
 
 func (s *Service) recordTurnUsage(ctx context.Context, res turnLoopResult, servedProvider, servedModel string, in, out, cacheCreation, cacheRead int, outputLimitReached bool) {
-	if s.pinStore == nil || res.HardPinned || res.BlindExperimentPassthrough {
+	if s.pinStore == nil || res.HardPinned || res.CallerModelPassthrough {
 		return
 	}
 	if isHMMTurn(res) {
@@ -6574,7 +6577,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 
 	// Wide cyclic re-read loop → escalate to opus (same path as the Anthropic
 	// ingress). See detectCyclicToolCallLoop / handleLoopEscalation.
-	if !blindExperimentPassthroughActive(ctx) {
+	if !callerModelPassthroughActive(ctx) {
 		if cyc, csig, ccount, cratio, cwin := detectCyclicToolCallLoop(env); cyc {
 			loopRole := roleForTier(catalog.TierFor(feats.Model))
 			s.handleLoopEscalation(ctx, csig, ccount, cratio, cwin, installationID, sessionKey, loopRole, feats.Model, forceModelSessionKey)
@@ -6718,7 +6721,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	pinAgeSec := routeRes.PinAgeSec
 	s.logPlannerOutcome(ctx, routeRes)
 
-	if clientID.ClientApp == ClientAppOpencode && !routeRes.BlindExperimentPassthrough && !routeRes.AuthoritativePerTurn && s.ResolveTextRepetitionBreakEnabled(ctx) && (tt == turntype.MainLoop || tt == turntype.ToolResult) {
+	if clientID.ClientApp == ClientAppOpencode && !routeRes.CallerModelPassthrough && !routeRes.AuthoritativePerTurn && s.ResolveTextRepetitionBreakEnabled(ctx) && (tt == turntype.MainLoop || tt == turntype.ToolResult) {
 		if looped, count, sampleHash := detectTextRepetition(env); looped {
 			role := roleForTier(catalog.TierFor(feats.Model))
 			return s.handleTextRepetitionBreak(ctx, w, env, count, sampleHash, installationID, sessionKey, role, decision.Model, decision.Provider, feats.Tokens)
@@ -7390,7 +7393,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	// the first upstream byte, and the primary dispatch has to hold its
 	// exhaustion flush so the refusal envelope can still be swallowed.
 	cyberRetryEligible := s.ResolveCyberRefusalRetry(ctx) &&
-		!routeRes.BlindExperimentPassthrough &&
+		!routeRes.CallerModelPassthrough &&
 		decision.Provider == providers.ProviderOpenAI &&
 		!strings.HasPrefix(decision.Reason, translate.ReasonUserForceModel) &&
 		!s.isHardPinnedTurn(ctx, routeRes.TurnType) &&
@@ -7415,21 +7418,21 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	// credits are intact, so its throttle rolls over like any other.
 	codexRetryViable := decision.Provider == providers.ProviderOpenAI &&
 		servedOnCodexSubscription(ctx) &&
-		!routeRes.BlindExperimentPassthrough &&
+		!routeRes.CallerModelPassthrough &&
 		!paidFallbackForbidden(ctx) &&
 		s.openaiFallbackKeyAvailable(ctx)
 	// OpenAI-compatible callers can route to Anthropic too; give their Claude
 	// subscription model-access rejection the same paid recovery as /v1/messages.
 	claudeRetryViable := decision.Provider == providers.ProviderAnthropic &&
 		servedOnSubscription(ctx) &&
-		!routeRes.BlindExperimentPassthrough &&
+		!routeRes.CallerModelPassthrough &&
 		!paidFallbackForbidden(ctx) &&
 		s.anthropicFallbackKeyAvailable(ctx)
 
 	siblingDecisions := s.siblingFailoverDecisions(ctx, decision, overflowEstimateOAI, env.SignatureTokenSavings(), outputReserveOAI)
 	siblingViable := s.ResolveSiblingFailover(ctx) &&
 		len(siblingDecisions) > 0 &&
-		!routeRes.BlindExperimentPassthrough &&
+		!routeRes.CallerModelPassthrough &&
 		!strings.HasPrefix(decision.Reason, translate.ReasonUserForceModel) &&
 		(s.shouldFailover(ctx) || s.gatewaySiblingAllowed(ctx, siblingDecisions[0])) &&
 		!paidFallbackForbidden(ctx)
@@ -7899,7 +7902,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	armDemotedOAI := ""
 	rescuedArmDemotedOAI := ""
 	var rescuedArmDemotionReasonOAI sessionpin.DemotionReason
-	if !routeRes.BlindExperimentPassthrough {
+	if !routeRes.CallerModelPassthrough {
 		s.maybeEvictPinAfterUpstreamErr(ctx, stickyHit, proxyErr, decision.Reason, installationIDFromContext(ctx), routeRes.SessionKey, stickyStateRole(routeRes))
 		// See ProxyMessages for the committed-stream and rescued-failure
 		// demotion rationale.
@@ -8017,7 +8020,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 
 	// Re-pin the session off the refusing model so the next turn skips it,
 	// whether or not this turn was rescued.
-	if cyberRefusalSeen && !routeRes.BlindExperimentPassthrough {
+	if cyberRefusalSeen && !routeRes.CallerModelPassthrough {
 		s.repinOffRefusingModel(ctx, routeRes.SessionKey, stickyStateRole(routeRes), primaryDecision, providers.CyberPolicyErrorCode, primaryDecision.Provider)
 	}
 

@@ -25,6 +25,7 @@ type Repository struct {
 	// key-scoped list is the org default, this narrows it per router user.
 	UserClusterModelLists auth.UserClusterModelListRepository
 	BlindExperiments      auth.BlindExperimentRepository
+	RoutingPolicies       auth.RoutingPolicyRepository
 	SubscriptionAccounts  auth.SubscriptionAccountRepository
 	// RequestIdentities resolves the caller behind a request email, which a
 	// shared routing key cannot identify on its own.
@@ -49,6 +50,7 @@ func NewRepository(tx sqlc.DBTX, encryptor auth.Encryptor) *Repository {
 		ClusterModelLists:         NewClusterModelListRepo(tx),
 		UserClusterModelLists:     NewUserClusterModelListRepo(tx),
 		BlindExperiments:          NewBlindExperimentRepo(tx),
+		RoutingPolicies:           NewRoutingPolicyRepo(tx),
 		SubscriptionAccounts:      NewSubscriptionAccountRepo(tx),
 		RequestIdentities:         NewRequestIdentityRepo(tx),
 		Telemetry:                 NewTelemetryRepo(tx),

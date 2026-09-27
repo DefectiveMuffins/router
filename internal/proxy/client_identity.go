@@ -99,6 +99,20 @@ func ResolveUserFromContext(ctx context.Context, authSvc *auth.Service, installa
 	return authSvc.ResolveAndStashUser(ctx, installation.ID, id.Email, id.AccountID, id.DisplayName)
 }
 
+// ResolveRoutingAssignment applies generic per-user policy after the identity has been resolved.
+// A request carrying an identity that could not be resolved must not silently inherit routing.
+func ResolveRoutingAssignment(ctx context.Context, authSvc *auth.Service, installation *auth.Installation) (context.Context, error) {
+	if authSvc == nil || installation == nil || auth.RoutingPolicyFrom(ctx).Mode != auth.RoutingPolicyAssigned {
+		return ctx, nil
+	}
+	identity := ClientIdentityFrom(ctx)
+	routerUserID, _ := ctx.Value(auth.UserIDContextKey{}).(string)
+	if routerUserID == "" && (identity.Email != "" || identity.AccountID != "") {
+		return ctx, auth.ErrRoutingPolicyUnavailable
+	}
+	return authSvc.WithRoutingAssignment(ctx, installation.ID, routerUserID)
+}
+
 // ClaudeCodeMetadata mirrors the JSON Claude Code encodes into
 // metadata.user_id. Email is promoted to router.model_router_users.
 type ClaudeCodeMetadata = requestcontext.ClaudeCodeMetadata

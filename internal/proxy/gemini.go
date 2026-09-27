@@ -492,7 +492,7 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 	// Two-strike provider disable: see ProxyMessages. Gemini rarely produces a
 	// real 529, but covers a future translate-layer path that might synthesize one.
 	armDemoted := ""
-	if !routeRes.BlindExperimentPassthrough {
+	if !routeRes.CallerModelPassthrough {
 		s.maybeDisableProviderAfterOverload(ctx, stickyHit, proxyErr, finalProvider, decision.Reason, installationID, routeRes.SessionKey, stickyStateRole(routeRes), routeRes.PinRole)
 		// See ProxyMessages for the committed-stream demotion rationale.
 		armDemoted = s.maybeDemoteArmAfterCommittedStreamFailure(ctx, committed(preludeBuf), routeRes.HardPinned, proxyErr, decision.Model, decision.Reason, installationID, routeRes.SessionKey, stickyStateRole(routeRes), routeRes.PinRole)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"weave-os/router/internal/auth"
 	"weave-os/router/internal/observability"
 	"weave-os/router/internal/router"
 	"weave-os/router/internal/router/sessionpin"
@@ -18,6 +19,9 @@ type classifierInputContextKey struct{}
 
 // Capture before command stripping, history rewriting or Responses projection.
 func (s *Service) withClassifierInput(ctx context.Context, body []byte, endpoint router.TranslationEndpoint) (context.Context, error) {
+	if auth.RoutingPassthroughFrom(ctx) {
+		return ctx, nil
+	}
 	if router.StrategyFromContext(ctx) != router.StrategyLLMClassifier {
 		return ctx, nil
 	}

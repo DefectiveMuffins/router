@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"weave-os/router/internal/auth"
 	"weave-os/router/internal/flags"
 	"weave-os/router/internal/inference"
 	"weave-os/router/internal/observability"
@@ -215,11 +216,11 @@ type turnLoopResult struct {
 	// ProxyMessages must serve the requested model straight through with no
 	// billing debit, bypassing Decision's normal dispatch.
 	UsageBypass bool
-	// BlindExperimentPassthrough records direct dispatch under the internal
+	// CallerModelPassthrough records direct dispatch under the internal
 	// experiment without changing usage-bypass billing semantics.
-	BlindExperimentPassthrough bool
-	PinTier                    string
-	PinAgeSec                  int64
+	CallerModelPassthrough bool
+	PinTier                string
+	PinAgeSec              int64
 	// ForcedPinDropped records that a /force-model pin existed but could not be
 	// served (provider not enabled, excluded, or not image-capable); surfaced so
 	// the turn does not silently contradict the "force-model applied" ack.
@@ -765,6 +766,15 @@ func (s *Service) runTurnLoop(
 	res.AuthoritativePerTurn = authoritativePolicyTurn(res.TurnType) &&
 		s.authoritativePerTurnSelection(ctx)
 	res.PinRole = roleForTier(res.RequestedTier)
+	if auth.RoutingPassthroughFrom(ctx) {
+		decision, err := s.callerModelPassthroughDecision(ctx, req)
+		if err != nil {
+			return res, err
+		}
+		res.Decision = decision
+		res.CallerModelPassthrough = true
+		return res, nil
+	}
 	if res.Strategy == router.StrategyLLMClassifier {
 		return s.runClassifierTurn(ctx, req, res, threadSessionKey)
 	}
@@ -1000,7 +1010,7 @@ func (s *Service) runTurnLoop(
 		}
 		if passthrough {
 			res.Decision = decision
-			res.BlindExperimentPassthrough = true
+			res.CallerModelPassthrough = true
 			return res, nil
 		}
 	}

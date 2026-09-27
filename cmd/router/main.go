@@ -526,6 +526,7 @@ func main() {
 	// 5-min TTL matches the API-key cache so both halves share one staleness bound under a Pub/Sub outage.
 	userClusterCache := auth.NewLRUUserClusterListCache(50000, 5*time.Minute)
 	blindExperimentCache := auth.NewLRUBlindExperimentCache(50000, 5*time.Minute, time.Now)
+	routingPolicyCache := auth.NewRoutingPolicyCache(5 * time.Minute)
 
 	pubsubProjectID := config.MustGet("PUBSUB_PROJECT_ID")
 	pubsubTopicID := config.MustGet("PUBSUB_TOPIC_ROUTER_INVALIDATION")
@@ -570,6 +571,7 @@ func main() {
 		WithClusterModelLists(repo.ClusterModelLists).
 		WithUserClusterModelLists(repo.UserClusterModelLists, userClusterCache).
 		WithBlindExperiments(repo.BlindExperiments, blindExperimentCache).
+		WithRoutingPolicies(repo.RoutingPolicies, routingPolicyCache).
 		WithWIFTokenSource(buildWIFTokenSource(logger)).
 		WithEntraTokenSource(buildEntraTokenSource(logger)).
 		WithFlagOverridesDisabled(flagOverridesDisabled).
@@ -611,7 +613,7 @@ func main() {
 	defer deleteSubscription()
 	logger.Info("Created per-replica invalidation subscription", "subscription", subscriptionName)
 
-	listener := routerpubsub.NewInvalidationListener(pubsubClient.Subscriber(subscriptionName), cache, userClusterCache, blindExperimentCache)
+	listener := routerpubsub.NewInvalidationListener(pubsubClient.Subscriber(subscriptionName), cache, userClusterCache, blindExperimentCache, routingPolicyCache)
 	listenerCtx, listenerCancel := context.WithCancel(context.Background())
 	defer func() {
 		listenerCancel()

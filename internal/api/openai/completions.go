@@ -31,6 +31,13 @@ func ChatCompletionHandler(svc *proxy.Service, authSvc *auth.Service) gin.Handle
 
 		ctx := context.WithValue(c.Request.Context(), proxy.ClientIdentityContextKey{}, proxy.ClientIdentityFromHeaders(c.Request.Header))
 		ctx = proxy.ResolveUserFromContext(ctx, authSvc, middleware.InstallationFrom(c))
+		ctx, err = proxy.ResolveRoutingAssignment(ctx, authSvc, middleware.InstallationFrom(c))
+		if err != nil {
+			log.Error("Failed to resolve routing assignment", "err", err)
+			c.Header("Retry-After", "1")
+			writeOpenAIError(c, http.StatusServiceUnavailable, "api_error", "Routing policy temporarily unavailable.")
+			return
+		}
 		c.Request = c.Request.WithContext(ctx)
 
 		if err := svc.ProxyOpenAIChatCompletion(c.Request.Context(), body, c.Writer, c.Request); err != nil {

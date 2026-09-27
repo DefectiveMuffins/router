@@ -75,6 +75,8 @@ type Service struct {
 	clusterModelLists      ClusterModelListRepository
 	userClusterModelLists  UserClusterModelListRepository
 	blindExperiments       BlindExperimentRepository
+	routingPolicies        RoutingPolicyRepository
+	routingPolicyCache     *RoutingPolicyCache
 	cache                  APIKeyCache
 	userCache              UserCache
 	userClusterCache       UserClusterListCache
@@ -150,6 +152,7 @@ func NewService(
 		userCache:            userCache,
 		userClusterCache:     NoOpUserClusterListCache{},
 		blindExperimentCache: NoOpBlindExperimentCache{},
+		routingPolicyCache:   NewRoutingPolicyCache(5 * time.Minute),
 		notifier:             NoOpInstallationChangeNotifier{},
 		now:                  now,
 		encryptor:            NoOpEncryptor{},
@@ -206,6 +209,69 @@ func (s *Service) WithBlindExperiments(repo BlindExperimentRepository, cache Bli
 	return s
 }
 
+// WithRoutingPolicies wires generic installation policy and user-assignment reads.
+func (s *Service) WithRoutingPolicies(repo RoutingPolicyRepository, cache *RoutingPolicyCache) *Service {
+	s.routingPolicies = repo
+	if cache != nil {
+		s.routingPolicyCache = cache
+	}
+	return s
+}
+
+// WithRoutingPolicy loads the policy even when the request has no user identity.
+func (s *Service) WithRoutingPolicy(ctx context.Context, installationID string) (context.Context, error) {
+	if s.routingPolicies == nil {
+		return ctx, nil
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		generation := s.routingPolicyCache.generation(installationID)
+		policy, found := s.routingPolicyCache.policy(installationID, generation)
+		if !found {
+			var err error
+			policy, err = s.routingPolicies.GetPolicy(ctx, installationID)
+			if err != nil {
+				return ctx, fmt.Errorf("load installation routing policy: %w: %w", err, ErrRoutingPolicyUnavailable)
+			}
+			if !s.routingPolicyCache.setPolicy(installationID, generation, policy) {
+				continue
+			}
+		}
+		if policy.Mode != RoutingPolicyInherit && policy.Mode != RoutingPolicyPassthrough && policy.Mode != RoutingPolicyAssigned {
+			return ctx, fmt.Errorf("unrecognized installation routing mode %q: %w", policy.Mode, ErrRoutingPolicyUnavailable)
+		}
+		if s.routingPolicyCache.generation(installationID) == generation {
+			return context.WithValue(ctx, routingPolicyContextKey{}, policy), nil
+		}
+	}
+	return ctx, ErrRoutingPolicyUnavailable
+}
+
+// WithRoutingAssignment treats a successfully read missing assignment as passthrough.
+func (s *Service) WithRoutingAssignment(ctx context.Context, installationID, routerUserID string) (context.Context, error) {
+	policy := RoutingPolicyFrom(ctx)
+	if policy.Mode != RoutingPolicyAssigned || routerUserID == "" {
+		return ctx, nil
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		generation := s.routingPolicyCache.generation(installationID)
+		routerOn, found := s.routingPolicyCache.assignment(installationID, routerUserID, policy.Revision, generation)
+		if !found {
+			var err error
+			routerOn, err = s.routingPolicies.HasAssignment(ctx, installationID, routerUserID, policy.Revision)
+			if err != nil {
+				return ctx, fmt.Errorf("load installation routing assignment: %w: %w", err, ErrRoutingPolicyUnavailable)
+			}
+			if !s.routingPolicyCache.setAssignment(installationID, routerUserID, policy.Revision, generation, routerOn) {
+				continue
+			}
+		}
+		if s.routingPolicyCache.generation(installationID) == generation {
+			return context.WithValue(ctx, routingDecisionContextKey{}, routerOn), nil
+		}
+	}
+	return ctx, ErrRoutingPolicyUnavailable
+}
+
 // WithInstallationChangeNotifier wires a cross-replica fanout. Pass nil to disable.
 func (s *Service) WithInstallationChangeNotifier(n InstallationChangeNotifier) *Service {
 	if n == nil {
@@ -237,6 +303,7 @@ func (s *Service) invalidateInstallation(installationID string) {
 		return
 	}
 	s.cache.InvalidateInstallation(installationID)
+	s.routingPolicyCache.InvalidateInstallation(installationID)
 	s.notifier.NotifyInstallationChanged(installationID)
 }
 
@@ -847,6 +914,9 @@ func (s *Service) ResolveAndStashUser(ctx context.Context, installationID, email
 
 func (s *Service) withUserSettings(ctx context.Context, installationID, routerUserID string) context.Context {
 	ctx = s.withUserClusterLists(ctx, installationID, routerUserID)
+	if RoutingPolicyFrom(ctx).Mode != "" && RoutingPolicyFrom(ctx).Mode != RoutingPolicyInherit {
+		return ctx
+	}
 	return s.withBlindExperiment(ctx, installationID, routerUserID)
 }
 

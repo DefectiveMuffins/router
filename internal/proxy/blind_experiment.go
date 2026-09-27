@@ -18,11 +18,15 @@ func blindExperimentPassthroughActive(ctx context.Context) bool {
 	return active && state.Arm == auth.BlindExperimentArmPassthrough
 }
 
+func callerModelPassthroughActive(ctx context.Context) bool {
+	return auth.RoutingPassthroughFrom(ctx) || blindExperimentPassthroughActive(ctx)
+}
+
 // policyTrainingAllowedForRequest excludes passthrough outcomes because the
 // served model was selected by the caller, not by the routing policy.
 func policyTrainingAllowedForRequest(ctx context.Context) bool {
 	trainingAllowed, _ := ctx.Value(PolicyTrainingAllowedContextKey{}).(bool)
-	return trainingAllowed && !blindExperimentPassthroughActive(ctx)
+	return trainingAllowed && !callerModelPassthroughActive(ctx)
 }
 
 // blindExperimentPassthroughDecision resolves the requested model without
@@ -31,28 +35,33 @@ func (s *Service) blindExperimentPassthroughDecision(ctx context.Context, req ro
 	if !blindExperimentPassthroughActive(ctx) {
 		return router.Decision{}, false, nil
 	}
+	decision, err := s.callerModelPassthroughDecision(ctx, req)
+	return decision, true, err
+}
+
+func (s *Service) callerModelPassthroughDecision(ctx context.Context, req router.Request) (router.Decision, error) {
 	if !modelPermittedByAllowlist(ctx, req.RequestedModel) || !modelInRequestSubset(ctx, req.RequestedModel) {
-		return router.Decision{}, true, fmt.Errorf("requested model %q is not allowed: %w", req.RequestedModel, cluster.ErrAllowlistEmptiesPool)
+		return router.Decision{}, fmt.Errorf("requested model %q is not allowed: %w", req.RequestedModel, cluster.ErrAllowlistEmptiesPool)
 	}
 	if _, excluded := req.ExcludedModels[req.RequestedModel]; excluded {
-		return router.Decision{}, true, fmt.Errorf("requested model %q cannot serve this request: %w", req.RequestedModel, cluster.ErrNoEligibleProvider)
+		return router.Decision{}, fmt.Errorf("requested model %q cannot serve this request: %w", req.RequestedModel, cluster.ErrNoEligibleProvider)
 	}
 	if _, excluded := req.SafetyExcludedModels[req.RequestedModel]; excluded {
-		return router.Decision{}, true, fmt.Errorf("requested model %q cannot serve this request: %w", req.RequestedModel, cluster.ErrNoEligibleProvider)
+		return router.Decision{}, fmt.Errorf("requested model %q cannot serve this request: %w", req.RequestedModel, cluster.ErrNoEligibleProvider)
 	}
 	if req.HasImages && !catalog.AcceptsImages(req.RequestedModel) {
-		return router.Decision{}, true, fmt.Errorf("requested model %q cannot accept images: %w", req.RequestedModel, cluster.ErrNoEligibleProvider)
+		return router.Decision{}, fmt.Errorf("requested model %q cannot accept images: %w", req.RequestedModel, cluster.ErrNoEligibleProvider)
 	}
 	if len(req.GatewayProviders) > 0 {
 		provider, found := gatewayProviderFor(req.RequestedModel, req.CustomBindings, req.GatewayProviders)
 		if !found {
-			return router.Decision{}, true, fmt.Errorf("requested model %q has no available gateway alias: %w", req.RequestedModel, policy.ErrGatewayServesNoDeployedModel)
+			return router.Decision{}, fmt.Errorf("requested model %q has no available gateway alias: %w", req.RequestedModel, policy.ErrGatewayServesNoDeployedModel)
 		}
 		return router.Decision{
 			Provider: provider,
 			Model:    req.RequestedModel,
 			Reason:   blindExperimentPublicDecisionReason,
-		}, true, nil
+		}, nil
 	}
 
 	availableProviders := req.EnabledProviders
@@ -62,22 +71,22 @@ func (s *Service) blindExperimentPassthroughDecision(ctx context.Context, req ro
 	if availableProviders == nil {
 		model, found := catalog.ByID(req.RequestedModel)
 		if !found || model.PrimaryProvider() == "" {
-			return router.Decision{}, true, fmt.Errorf("requested model %q has no available provider: %w", req.RequestedModel, cluster.ErrNoEligibleProvider)
+			return router.Decision{}, fmt.Errorf("requested model %q has no available provider: %w", req.RequestedModel, cluster.ErrNoEligibleProvider)
 		}
 		return router.Decision{
 			Provider: model.PrimaryProvider(),
 			Model:    req.RequestedModel,
 			Reason:   blindExperimentPublicDecisionReason,
-		}, true, nil
+		}, nil
 	}
 
 	binding, found := catalog.ResolveBindingWithCustom(req.RequestedModel, availableProviders, req.CustomBindings)
 	if !found {
-		return router.Decision{}, true, fmt.Errorf("requested model %q has no available provider: %w", req.RequestedModel, cluster.ErrNoEligibleProvider)
+		return router.Decision{}, fmt.Errorf("requested model %q has no available provider: %w", req.RequestedModel, cluster.ErrNoEligibleProvider)
 	}
 	return router.Decision{
 		Provider: binding.Provider,
 		Model:    req.RequestedModel,
 		Reason:   blindExperimentPublicDecisionReason,
-	}, true, nil
+	}, nil
 }

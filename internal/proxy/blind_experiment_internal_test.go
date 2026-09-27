@@ -38,7 +38,7 @@ func (spy *blindExperimentRouterSpy) Route(context.Context, router.Request) (rou
 	return spy.decision, spy.err
 }
 
-func TestBlindExperimentPassthroughSkipsAutomaticPinsAndScorer(t *testing.T) {
+func TestCallerModelPassthroughSkipsAutomaticPinsAndScorer(t *testing.T) {
 	routerSpy := &blindExperimentRouterSpy{err: errors.New("scorer must not run")}
 	pins := newStubPinStore()
 	service := NewService(routerSpy, nil, nil, false, nil, pins, false,
@@ -64,7 +64,7 @@ func TestBlindExperimentPassthroughSkipsAutomaticPinsAndScorer(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, routerSpy.routeCalls)
-	assert.True(t, loopResult.BlindExperimentPassthrough)
+	assert.True(t, loopResult.CallerModelPassthrough)
 	assert.False(t, loopResult.UsageBypass)
 	assert.Equal(t, "claude-sonnet-4-6", loopResult.Decision.Model)
 	assert.Equal(t, providers.ProviderAnthropic, loopResult.Decision.Provider)
@@ -77,7 +77,7 @@ func TestBlindExperimentPassthroughSkipsAutomaticPinsAndScorer(t *testing.T) {
 	assert.Zero(t, pins.usageHits, "passthrough must not update automatic pin usage")
 }
 
-func TestBlindExperimentPassthroughLeavesAutomaticSessionHistoryUntouched(t *testing.T) {
+func TestCallerModelPassthroughLeavesAutomaticSessionHistoryUntouched(t *testing.T) {
 	pins := newStubPinStore()
 	service := NewService(nil, nil, nil, false, nil, pins, false,
 		providers.ProviderAnthropic, "claude-haiku-4-5", nil)
@@ -99,7 +99,7 @@ func TestBlindExperimentPassthroughLeavesAutomaticSessionHistoryUntouched(t *tes
 	assert.Equal(t, [sessionpin.SessionKeyLen]byte{}, loopResult.SessionKey)
 	assert.Empty(t, loopResult.PriorServedModel)
 	assert.False(t, loopResult.SessionEverSwitched)
-	assert.True(t, loopResult.BlindExperimentPassthrough)
+	assert.True(t, loopResult.CallerModelPassthrough)
 	pins.mu.Lock()
 	defer pins.mu.Unlock()
 	assert.Equal(t, []string{forceModelSessionRole}, pins.getRoles,
@@ -108,7 +108,7 @@ func TestBlindExperimentPassthroughLeavesAutomaticSessionHistoryUntouched(t *tes
 	assert.Zero(t, pins.usageHits)
 }
 
-func TestBlindExperimentPassthroughUsesGatewayAlias(t *testing.T) {
+func TestCallerModelPassthroughUsesGatewayAlias(t *testing.T) {
 	service := NewService(nil, nil, nil, false, nil, nil, false,
 		providers.ProviderAnthropic, "claude-haiku-4-5", nil)
 
@@ -137,7 +137,7 @@ func TestBlindExperimentPassthroughUsesGatewayAlias(t *testing.T) {
 	assert.Equal(t, blindExperimentPublicDecisionReason, decision.Reason)
 }
 
-func TestBlindExperimentPassthroughHonorsExcludedModels(t *testing.T) {
+func TestCallerModelPassthroughHonorsExcludedModels(t *testing.T) {
 	routerSpy := &blindExperimentRouterSpy{err: errors.New("scorer must not run")}
 	service := NewService(routerSpy, nil, nil, false, nil, nil, false,
 		providers.ProviderAnthropic, "claude-haiku-4-5", nil)
@@ -189,7 +189,7 @@ func TestBlindExperimentRouterOnUsesScorer(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, routerSpy.routeCalls)
-	assert.False(t, loopResult.BlindExperimentPassthrough)
+	assert.False(t, loopResult.CallerModelPassthrough)
 	assert.Equal(t, "claude-haiku-4-5", loopResult.Decision.Model)
 }
 
@@ -219,7 +219,7 @@ func TestCohortTelemetrySeparatesScheduledIntendedAndApplied(t *testing.T) {
 	ctx := context.WithValue(context.Background(), auth.BlindExperimentContextKey{}, state)
 	params := InsertTelemetryParams{}
 	applyBlindExperimentTelemetry(ctx, &params, &turnLoopResult{
-		Decision: router.Decision{Model: "claude-sonnet-4-6"}, BlindExperimentPassthrough: true})
+		Decision: router.Decision{Model: "claude-sonnet-4-6"}, CallerModelPassthrough: true})
 	assert.Equal(t, auth.BlindExperimentArmRouterOn, params.CohortScheduledArm)
 	assert.Equal(t, auth.BlindExperimentArmPassthrough, params.BlindExperimentArm)
 	require.NotNil(t, params.CohortTreatmentApplied)
