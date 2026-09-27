@@ -54,6 +54,16 @@ const codexCompactionMarkerPhrase = "you are performing a context checkpoint com
 // appends as the trailing user message of a forked copy of the conversation.
 const recapMarkerPhrase = "the user stepped away and is coming back. recap in under"
 
+// openCodeTitlePromptPrefix opens the system prompt of OpenCode's built-in
+// title agent (identical in 1.x and 2.x). OpenCode 2.x does not load the
+// lifecycle plugin that sends X-Weave-OpenCode-Agent, so this is the only
+// signal there.
+const openCodeTitlePromptPrefix = "you are a title generator. you output only a thread title."
+
+// openCodeTitleMaxMessages bounds OpenCode's title window: the system prompt
+// plus at most two user messages (1.x prepends a "Generate a title" turn).
+const openCodeTitleMaxMessages = 3
+
 const (
 	systemReminderOpen  = "<system-reminder>"
 	systemReminderClose = "</system-reminder>"
@@ -95,7 +105,8 @@ func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, sub
 	}
 	if openCodeAgent == requestcontext.OpenCodeAgentTitle ||
 		isTitleGen(env, feats.HasTools) ||
-		(feats.TitleGenHint && env.SourceFormat() == translate.FormatOpenAI) {
+		(feats.TitleGenHint && env.SourceFormat() == translate.FormatOpenAI) ||
+		isOpenCodeTitleGen(env, feats) {
 		return TitleGen
 	}
 	systemText := env.SystemText()
@@ -155,6 +166,34 @@ func isTitleGen(env *translate.RequestEnvelope, hasTools bool) bool {
 		return false
 	}
 	return env.RequestsTitleSchema()
+}
+
+// isOpenCodeTitleGen reports whether a request is OpenCode's title call: no
+// tools, and a fresh window of the title-agent system prompt followed only by
+// user messages. OpenCode titles the session with the first non-empty line of
+// the reply, so any router prefix on a misclassified turn becomes the title.
+// The prompt may arrive as `instructions`, a system message, or a developer
+// message, so the leading message is read directly rather than via SystemText.
+func isOpenCodeTitleGen(env *translate.RequestEnvelope, feats translate.RoutingFeatures) bool {
+	if feats.HasTools || feats.MessageCount <= 0 || feats.MessageCount > openCodeTitleMaxMessages {
+		return false
+	}
+	msgs := env.ConversationMessages()
+	if len(msgs) < 2 || len(msgs) > openCodeTitleMaxMessages {
+		return false
+	}
+	if role := msgs[0].Role; role != "system" && role != "developer" {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToLower(msgs[0].Text), openCodeTitlePromptPrefix) {
+		return false
+	}
+	for _, msg := range msgs[1:] {
+		if msg.Role != "user" || len(msg.ToolResults) > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // isCompaction reports whether the request carries Claude Code's compaction instruction

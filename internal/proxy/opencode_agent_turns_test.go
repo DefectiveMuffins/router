@@ -18,9 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// OpenCode's Responses turns have no body fingerprint for title, sub-agent, or
-// compaction work: every lifecycle request carries the same "auto" model and
-// tool registry. The typed X-Weave-OpenCode-Agent header is the only signal.
+// OpenCode's Responses turns have no body fingerprint for sub-agent or
+// compaction work: those lifecycle requests carry the same "auto" model and
+// tool registry, so the typed X-Weave-OpenCode-Agent header is the only signal.
 const openCodeResponsesBody = `{
 	"model":"auto",
 	"stream":false,
@@ -186,4 +186,41 @@ func TestService_OpenCodeAgent_BuildKeepsToolOutputCommandsActionable(t *testing
 	require.NotEmpty(t, store.upserts)
 	assert.Equal(t, "gpt-5", store.upserts[0].Model)
 	assert.Equal(t, "gpt-5", rec.Header().Get(proxy.HeaderRouterModel))
+}
+
+// OpenCode 2.x sends no lifecycle header or Session-Id, so every title call
+// from one API key derives the same session key from its constant system
+// prompt. It must hard-pin from its body and never read or write that pin.
+func TestService_OpenCodeHeaderlessTitleHardPinsWithoutTouchingThePin(t *testing.T) {
+	const mainBody = `{"model":"auto","stream":false,
+		"tools":[{"type":"function","name":"bash","parameters":{"type":"object"}}],
+		"input":[
+			{"role":"system","content":"You are an AI agent running in OpenCode."},
+			{"role":"user","content":"who are you?"}]}`
+	const titleBody = `{"model":"auto","stream":false,"input":[
+		{"role":"system","content":"You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later."},
+		{"role":"user","content":"who are you?"}]}`
+	store := newFakePinStore()
+	fr := &fakeRouter{decision: router.Decision{Provider: providers.ProviderOpenAI, Model: "gpt-4o", Reason: "cluster"}}
+	svc := newOpenCodeTurnSvc(fr, store)
+	apiKeyID := uuid.New().String()
+	send := func(body string) *httptest.ResponseRecorder {
+		httpReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(""))
+		httpReq.Header.Set("X-App", proxy.ClientAppOpencode)
+		ctx := context.WithValue(authedCtx(apiKeyID), proxy.ClientIdentityContextKey{}, proxy.ClientIdentityFromHeaders(httpReq.Header))
+		rec := httptest.NewRecorder()
+		require.NoError(t, svc.ProxyOpenAIResponses(ctx, []byte(body), rec, httpReq))
+		return rec
+	}
+
+	send(mainBody)
+	require.Len(t, store.upserts, 1)
+
+	for range 2 {
+		rec := send(titleBody)
+		assert.Equal(t, openCodeHardPinModel, rec.Header().Get(proxy.HeaderRouterModel))
+	}
+
+	assert.Equal(t, 1, fr.routeCalls, "title generation must bypass the scorer")
+	assert.Len(t, store.upserts, 1, "title generation must not anchor a pin")
 }
