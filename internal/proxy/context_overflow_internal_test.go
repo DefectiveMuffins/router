@@ -195,6 +195,17 @@ func TestWithoutModels(t *testing.T) {
 	assert.Nil(t, withoutModels(nil, []string{"a"}))
 }
 
+func TestWithoutModelsKeep_PreservesIndependentExclusions(t *testing.T) {
+	set := map[string]struct{}{"gemini-3.1-pro-preview": {}, "claude-haiku-4-5": {}}
+	admitted := []string{"gemini-3.1-pro-preview"}
+	unsigned := []string{"gemini-3.1-pro-preview"}
+	out := withoutModelsKeep(set, admitted, unsigned)
+	assert.Equal(t, map[string]struct{}{"gemini-3.1-pro-preview": {}, "claude-haiku-4-5": {}}, out,
+		"unsigned-history exclusion survives overflow readmission")
+	assert.Equal(t, map[string]struct{}{"claude-haiku-4-5": {}}, withoutModelsKeep(set, admitted, nil),
+		"with no keep list, overflow readmission still drops the overflowed model")
+}
+
 func TestIsUpstreamContextOverflow_ProviderShapes(t *testing.T) {
 	overflow := func(status int, body string) error {
 		return &providers.UpstreamErrorResponse{Status: status, Body: []byte(body)}

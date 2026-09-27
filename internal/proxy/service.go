@@ -1429,6 +1429,24 @@ func withoutModels(set map[string]struct{}, models []string) map[string]struct{}
 	return out
 }
 
+// withoutModelsKeep is withoutModels but leaves keep IDs in the set.
+func withoutModelsKeep(set map[string]struct{}, models, keep []string) map[string]struct{} {
+	if len(keep) == 0 {
+		return withoutModels(set, models)
+	}
+	kept := make(map[string]struct{}, len(keep))
+	for _, model := range keep {
+		kept[model] = struct{}{}
+	}
+	filtered := make([]string, 0, len(models))
+	for _, model := range models {
+		if _, ok := kept[model]; !ok {
+			filtered = append(filtered, model)
+		}
+	}
+	return withoutModels(set, filtered)
+}
+
 // gemini3xRequiresSignedHistory reports whether model is a Gemini 3.x model,
 // which 400s (INVALID_ARGUMENT) when the request history carries function-call
 // parts lacking the thoughtSignature Gemini issued. Scoped by family name; if
@@ -3686,7 +3704,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 		GatewayProviders:                 s.gatewayProvidersForRequest(ctx),
 		ExcludedModels:                   excluded,
 		AllowedModels:                    allowedModelsForRequest(ctx),
-		SafetyExcludedModels:             withoutModels(s.safetyExcludedModels(env, outputReserve, enabledProviders), overflowAdmitted),
+		SafetyExcludedModels:             withoutModelsKeep(s.safetyExcludedModels(env, outputReserve, enabledProviders), overflowAdmitted, geminiUnsigned),
 		PreferredModels:                  s.preferredModelsForRequest(ctx),
 		SubscriptionStatePreferredModels: subscriptionStatePreferredModelsFromContext(ctx),
 		RoutingKnobs:                     routingKnobsForRequest(ctx),
@@ -6660,7 +6678,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 		GatewayProviders:                 s.gatewayProvidersForRequest(ctx),
 		ExcludedModels:                   excludedOAI,
 		AllowedModels:                    allowedModelsForRequest(ctx),
-		SafetyExcludedModels:             withoutModels(s.safetyExcludedModels(env, outputReserveOAI, enabledProviders), overflowAdmittedOAI),
+		SafetyExcludedModels:             withoutModelsKeep(s.safetyExcludedModels(env, outputReserveOAI, enabledProviders), overflowAdmittedOAI, geminiUnsignedOAI),
 		PreferredModels:                  s.preferredModelsForRequest(ctx),
 		SubscriptionStatePreferredModels: subscriptionStatePreferredModelsFromContext(ctx),
 		RoutingKnobs:                     routingKnobsForRequest(ctx),
