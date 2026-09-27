@@ -89,6 +89,9 @@ type OpenCodeCaller struct {
 	// IsClient gates body fallbacks keyed on OpenCode's harness prompts, which
 	// another client could send verbatim.
 	IsClient bool
+	// IsSubagent marks a request from an OpenCode child session. Its turns
+	// carry the full tool registry, so no body fingerprint identifies them.
+	IsSubagent bool
 }
 
 // DetectFromEnvelope classifies an inbound request. subAgentHint is the
@@ -130,7 +133,8 @@ func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, sub
 	if env.SourceFormat() == translate.FormatAnthropic && isRecap(lastUserText) {
 		return Recap
 	}
-	if isSubAgentDispatch(env.MetadataUserID(), env.AnthropicBillingHeader(), env.FirstUserMessageText(), subAgentHint) {
+	if openCode.IsSubagent ||
+		isSubAgentDispatch(env.MetadataUserID(), env.AnthropicBillingHeader(), env.FirstUserMessageText(), subAgentHint) {
 		return SubAgentDispatch
 	}
 	if isClassifier(feats) {

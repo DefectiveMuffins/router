@@ -60,6 +60,13 @@ func OpenCodeSessionIDFromHeaders(headers http.Header) string {
 	return session
 }
 
+// IsOpenCodeSubagent reports whether OpenCode's native headers name a child
+// session with a parent, which OpenCode sends only on subagent requests.
+func IsOpenCodeSubagent(headers http.Header) bool {
+	return NormalizeClientIdentifier(headers.Get(OpenCodeSessionHeader)) != "" &&
+		NormalizeClientIdentifier(headers.Get(OpenCodeParentSessionHeader)) != ""
+}
+
 // ClaudeCodeMetadata is caller-asserted attribution, never authenticated account ownership.
 type ClaudeCodeMetadata struct {
 	DeviceID  string `json:"device_id"`

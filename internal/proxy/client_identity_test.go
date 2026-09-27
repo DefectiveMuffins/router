@@ -284,7 +284,25 @@ func TestClientIdentityFromHeaders_SessionIDSources(t *testing.T) {
 		h.Set("X-OpenCode-Session", "ses_child")
 		h.Set("X-Parent-Session-Id", opencode)
 		h.Set("X-App", "opencode")
-		assert.Equal(t, opencode, proxy.ClientIdentityFromHeaders(h).SessionID)
+		got := proxy.ClientIdentityFromHeaders(h)
+		assert.Equal(t, opencode, got.SessionID)
+		assert.True(t, got.OpenCodeSubagent)
+	})
+	t.Run("opencode parent session is not a subagent", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("X-OpenCode-Session", opencode)
+		h.Set("X-App", "opencode")
+		assert.False(t, proxy.ClientIdentityFromHeaders(h).OpenCodeSubagent)
+		h.Del("X-OpenCode-Session")
+		h.Set("X-Parent-Session-Id", opencode)
+		assert.False(t, proxy.ClientIdentityFromHeaders(h).OpenCodeSubagent, "a parent id without a child session is not a subagent")
+	})
+	t.Run("opencode subagent headers ignored for other clients", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("X-OpenCode-Session", "ses_child")
+		h.Set("X-Parent-Session-Id", opencode)
+		h.Set("X-App", "codex")
+		assert.False(t, proxy.ClientIdentityFromHeaders(h).OpenCodeSubagent)
 	})
 	t.Run("opencode detected from User-Agent", func(t *testing.T) {
 		h := http.Header{}

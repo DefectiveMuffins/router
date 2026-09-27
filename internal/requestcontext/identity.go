@@ -30,6 +30,9 @@ type ClientIdentity struct {
 	// RolloutID is the x-weave-rollout-id eval/training-harness correlation
 	// id; joins a sandbox rollout's graded reward to its routing decisions.
 	RolloutID string
+	// OpenCodeSubagent marks an OpenCode child-session request. Routing
+	// metadata only: never used for auth, billing, or provider eligibility.
+	OpenCodeSubagent bool
 }
 
 // OpenCodeSessionHeader carries OpenCode's own session id (ses_...), which

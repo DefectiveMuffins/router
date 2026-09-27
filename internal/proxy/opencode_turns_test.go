@@ -187,3 +187,41 @@ func TestService_OpenCodeTitlePromptIgnoredForOtherClients(t *testing.T) {
 	assert.Equal(t, "gpt-4o", rec.Header().Get(proxy.HeaderRouterModel))
 	assert.NotEmpty(t, store.upserts, "a scored turn anchors the conversation pin")
 }
+
+// OpenCode v2 marks a subagent only by its native child-session headers; its
+// body carries the full tool registry like any main-loop turn. A configured
+// sub-agent override must serve it, while the parent stays scored and the same
+// headers from another client select nothing.
+func TestService_OpenCodeChildSessionUsesSubAgentOverride(t *testing.T) {
+	const overrideModel = "gpt-5"
+	fr := &fakeRouter{decision: router.Decision{Provider: providers.ProviderOpenAI, Model: "gpt-4o", Reason: "cluster"}}
+	svc := newOpenCodeTurnSvc(fr, newFakePinStore()).WithSubAgentOverride(providers.ProviderOpenAI, overrideModel)
+	apiKeyID := uuid.New().String()
+	send := func(clientApp string, headers map[string]string) *httptest.ResponseRecorder {
+		httpReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(""))
+		httpReq.Header.Set("X-App", clientApp)
+		for name, value := range headers {
+			httpReq.Header.Set(name, value)
+		}
+		ctx := context.WithValue(authedCtx(apiKeyID), proxy.ClientIdentityContextKey{}, proxy.ClientIdentityFromHeaders(httpReq.Header))
+		rec := httptest.NewRecorder()
+		require.NoError(t, svc.ProxyOpenAIResponses(ctx, []byte(openCodeResponsesBody), rec, httpReq))
+		return rec
+	}
+	childHeaders := map[string]string{
+		requestcontext.OpenCodeSessionHeader:       "ses_opencode_child",
+		requestcontext.OpenCodeParentSessionHeader: openCodeParentSession,
+	}
+
+	parent := send(proxy.ClientAppOpencode, map[string]string{requestcontext.OpenCodeSessionHeader: openCodeParentSession})
+	assert.Equal(t, "gpt-4o", parent.Header().Get(proxy.HeaderRouterModel))
+	assert.Equal(t, 1, fr.routeCalls)
+
+	child := send(proxy.ClientAppOpencode, childHeaders)
+	assert.Equal(t, overrideModel, child.Header().Get(proxy.HeaderRouterModel))
+	assert.Equal(t, 1, fr.routeCalls, "the sub-agent override bypasses the scorer")
+
+	other := send(proxy.ClientAppCodex, childHeaders)
+	assert.Equal(t, "gpt-4o", other.Header().Get(proxy.HeaderRouterModel))
+	assert.Equal(t, 2, fr.routeCalls, "OpenCode child-session headers are ignored for other clients")
+}

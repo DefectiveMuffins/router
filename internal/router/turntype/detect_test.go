@@ -689,3 +689,26 @@ func TestDetect_OpenCodeTitlePromptWithoutHeader(t *testing.T) {
 		assert.Equal(t, turntype.MainLoop, turntype.DetectFromEnvelope(env, feats, ""))
 	})
 }
+
+// OpenCode subagent turns look like main-loop turns in the body, so only the
+// caller's child-session signal selects SubAgentDispatch; probes still win.
+func TestDetect_OpenCodeSubagent(t *testing.T) {
+	parse := func(t *testing.T, body string) (*translate.RequestEnvelope, translate.RoutingFeatures) {
+		t.Helper()
+		chat, _, _, err := translate.ResponsesToChatCompletions([]byte(body))
+		require.NoError(t, err)
+		env, err := translate.ParseOpenAI(chat)
+		require.NoError(t, err)
+		return env, env.RoutingFeatures(false)
+	}
+	env, feats := parse(t, `{"model":"auto","stream":true,
+		"tools":[{"type":"function","name":"bash","parameters":{"type":"object"}}],
+		"input":[{"role":"user","content":"Explore the repository layout"}]}`)
+	subagent := turntype.OpenCodeCaller{IsClient: true, IsSubagent: true}
+
+	assert.Equal(t, turntype.SubAgentDispatch, turntype.Detect(env, feats, "", subagent))
+	assert.Equal(t, turntype.MainLoop, turntype.Detect(env, feats, "", turntype.OpenCodeCaller{IsClient: true}))
+
+	feats.MaxTokens = 1
+	assert.Equal(t, turntype.Probe, turntype.Detect(env, feats, "", subagent))
+}
