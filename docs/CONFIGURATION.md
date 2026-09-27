@@ -574,6 +574,11 @@ keys off the `<model_switch>` developer fragment Codex records when the user
 switches models mid-session, and pins the request's model from then on. The
 model a session launched with is a baseline and routes automatically. The
 installed `$force-model` / `$fm` skill remains the persistent-pin path.
+An explicit force-model choice also takes precedence over an installation's
+passthrough policy, including users without an assignment in assigned mode.
+Those policies disable automatic model selection, not the caller's explicit
+choice. Without a force-model choice, they preserve the request's model.
+Installation model/provider restrictions still apply to the forced model.
 The name is matched **exactly** — it must be a canonical catalog ID
 (`qwen/qwen3.8-max`), that model's bare name without the vendor prefix
 (`qwen3.8-max`), or an alias (`opus`, `qwen-max`), optionally with a `:level`
