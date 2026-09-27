@@ -7418,14 +7418,14 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	// credits are intact, so its throttle rolls over like any other.
 	codexRetryViable := decision.Provider == providers.ProviderOpenAI &&
 		servedOnCodexSubscription(ctx) &&
-		!routeRes.CallerModelPassthrough &&
+		!blindExperimentPassthroughActive(ctx) &&
 		!paidFallbackForbidden(ctx) &&
 		s.openaiFallbackKeyAvailable(ctx)
 	// OpenAI-compatible callers can route to Anthropic too; give their Claude
 	// subscription model-access rejection the same paid recovery as /v1/messages.
 	claudeRetryViable := decision.Provider == providers.ProviderAnthropic &&
 		servedOnSubscription(ctx) &&
-		!routeRes.CallerModelPassthrough &&
+		!blindExperimentPassthroughActive(ctx) &&
 		!paidFallbackForbidden(ctx) &&
 		s.anthropicFallbackKeyAvailable(ctx)
 

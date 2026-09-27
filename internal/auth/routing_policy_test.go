@@ -122,13 +122,56 @@ func TestRoutingPolicyInvalidationStillRejectsStaleReadAfterGenerationEviction(t
 		fixture.policy = auth.RoutingPolicy{Mode: auth.RoutingPolicyPassthrough, Revision: 2}
 		cache.InvalidateInstallation("installation")
 		for installationNumber := 0; installationNumber <= 10000; installationNumber++ {
-			cache.InvalidateInstallation(strconv.Itoa(installationNumber))
+			_, err := service.WithRoutingPolicy(context.Background(), strconv.Itoa(installationNumber))
+			require.NoError(t, err)
 		}
 	}
 	ctx, err := service.WithRoutingPolicy(context.Background(), "installation")
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), auth.RoutingPolicyFrom(ctx).Revision)
-	assert.Equal(t, 2, fixture.policyReads)
+	assert.Equal(t, 10003, fixture.policyReads)
+}
+
+func TestRoutingPolicyInvalidationDoesNotAffectOtherInstallations(t *testing.T) {
+	cache := auth.NewRoutingPolicyCache(time.Minute)
+	fixture := &routingPolicyFixture{policy: auth.RoutingPolicy{Mode: auth.RoutingPolicyAssigned, Revision: 1}, assigned: true}
+	service := auth.NewService(nil, nil, nil, nil, auth.NoOpAPIKeyCache{}, nil, time.Now).WithRoutingPolicies(fixture, cache)
+	ctx, err := service.WithRoutingPolicy(context.Background(), "installation")
+	require.NoError(t, err)
+	ctx, err = service.WithRoutingAssignment(ctx, "installation", "user")
+	require.NoError(t, err)
+	require.False(t, auth.RoutingPassthroughFrom(ctx))
+
+	for installationNumber := 0; installationNumber <= 10000; installationNumber++ {
+		cache.InvalidateInstallation(strconv.Itoa(installationNumber))
+	}
+	fixture.policyErr = errors.New("cached policy should remain available")
+	fixture.userErr = errors.New("cached assignment should remain available")
+	ctx, err = service.WithRoutingAssignment(ctx, "installation", "user")
+	require.NoError(t, err, "unrelated invalidations must not stale the admitted policy")
+	assert.False(t, auth.RoutingPassthroughFrom(ctx))
+	ctx, err = service.WithRoutingPolicy(context.Background(), "installation")
+	require.NoError(t, err)
+	ctx, err = service.WithRoutingAssignment(ctx, "installation", "user")
+	require.NoError(t, err)
+	assert.False(t, auth.RoutingPassthroughFrom(ctx))
+	assert.Equal(t, 1, fixture.policyReads)
+	assert.Equal(t, 1, fixture.userReads)
+}
+
+func TestRoutingPolicyReadsSurviveUnrelatedInvalidations(t *testing.T) {
+	cache := auth.NewRoutingPolicyCache(time.Minute)
+	fixture := &routingPolicyFixture{policy: auth.RoutingPolicy{Mode: auth.RoutingPolicyAssigned, Revision: 1}, assigned: true}
+	service := auth.NewService(nil, nil, nil, nil, auth.NoOpAPIKeyCache{}, nil, time.Now).WithRoutingPolicies(fixture, cache)
+	fixture.beforePolicyReturn = func() { cache.InvalidateInstallation("other-installation") }
+	fixture.beforeUserReturn = func() { cache.InvalidateInstallation("other-installation") }
+	ctx, err := service.WithRoutingPolicy(context.Background(), "installation")
+	require.NoError(t, err)
+	ctx, err = service.WithRoutingAssignment(ctx, "installation", "user")
+	require.NoError(t, err)
+	assert.False(t, auth.RoutingPassthroughFrom(ctx))
+	assert.Equal(t, 1, fixture.policyReads)
+	assert.Equal(t, 1, fixture.userReads)
 }
 
 func TestRoutingPolicyLookupErrorsAndInvalidation(t *testing.T) {
@@ -161,4 +204,25 @@ func TestRoutingPolicyLookupErrorsAndInvalidation(t *testing.T) {
 	assert.True(t, auth.RoutingPassthroughFrom(ctx))
 	assert.Equal(t, 3, fixture.policyReads)
 	assert.Equal(t, 3, fixture.userReads)
+}
+
+func TestRoutingPolicyCacheExpiresWithoutInvalidation(t *testing.T) {
+	cache := auth.NewRoutingPolicyCache(20 * time.Millisecond)
+	fixture := &routingPolicyFixture{policy: auth.RoutingPolicy{Mode: auth.RoutingPolicyAssigned, Revision: 1}, assigned: true}
+	service := auth.NewService(nil, nil, nil, nil, auth.NoOpAPIKeyCache{}, nil, time.Now).WithRoutingPolicies(fixture, cache)
+	ctx, err := service.WithRoutingPolicy(context.Background(), "installation")
+	require.NoError(t, err)
+	ctx, err = service.WithRoutingAssignment(ctx, "installation", "user")
+	require.NoError(t, err)
+	require.False(t, auth.RoutingPassthroughFrom(ctx))
+	fixture.policy.Revision = 2
+	fixture.assigned = false
+	require.Eventually(t, func() bool {
+		ctx, err := service.WithRoutingPolicy(context.Background(), "installation")
+		if err != nil {
+			return false
+		}
+		ctx, err = service.WithRoutingAssignment(ctx, "installation", "user")
+		return err == nil && auth.RoutingPolicyFrom(ctx).Revision == 2 && auth.RoutingPassthroughFrom(ctx)
+	}, time.Second, 10*time.Millisecond)
 }

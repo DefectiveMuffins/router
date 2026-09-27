@@ -15,11 +15,11 @@ func NewRoutingPolicyRepo(tx sqlc.DBTX) auth.RoutingPolicyRepository {
 }
 
 func (repo *routingPolicyRepo) GetPolicy(ctx context.Context, installationID string) (auth.RoutingPolicy, error) {
-	parsedID, err := parseUUID(installationID)
+	parsedInstallationID, err := parseUUID(installationID)
 	if err != nil {
 		return auth.RoutingPolicy{}, err
 	}
-	row, err := sqlc.New(repo.tx).GetInstallationRoutingPolicy(ctx, parsedID)
+	row, err := sqlc.New(repo.tx).GetInstallationRoutingPolicy(ctx, parsedInstallationID)
 	if err != nil {
 		return auth.RoutingPolicy{}, err
 	}

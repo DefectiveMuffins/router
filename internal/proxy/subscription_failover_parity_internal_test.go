@@ -569,9 +569,11 @@ type parityUpstream struct {
 
 	subDispatches  int
 	paidDispatches int
+	servedModels   []string
 }
 
-func (p *parityUpstream) Proxy(ctx context.Context, _ router.Decision, _ providers.PreparedRequest, w http.ResponseWriter, _ *http.Request) error {
+func (p *parityUpstream) Proxy(ctx context.Context, decision router.Decision, _ providers.PreparedRequest, w http.ResponseWriter, _ *http.Request) error {
+	p.servedModels = append(p.servedModels, decision.Model)
 	// No credential in context means the provider adapter falls back to the
 	// deployment key, which is a paid dispatch.
 	creds := CredentialsFromContext(ctx)
@@ -726,6 +728,60 @@ func TestSubscriptionFailoverParity_CallerModelPassthrough(t *testing.T) {
 			assert.Equal(t, wantPaid[in.name], upstream.paidDispatches,
 				"blind-experiment passthrough gates the Codex rescue and not the Anthropic one (D9)")
 		})
+	}
+}
+
+func TestRoutingPolicyPassthroughPreservesSameModelCredentialRescue(t *testing.T) {
+	responses := parityCodexIngress()
+	responses.name = "responses"
+	responses.path = "/v1/responses"
+	responses.call = (*Service).ProxyOpenAIResponses
+	responses.requestBody = func(stream bool) string {
+		return `{"model":"` + parityCodexModel + `","stream":` + boolLit(stream) + `,"input":"investigate the failing dispatch and report back"}`
+	}
+	claudeChat := parityAnthropicIngress()
+	claudeChat.name = "chat_claude"
+	claudeChat.path = "/v1/chat/completions"
+	claudeChat.call = (*Service).ProxyOpenAIChatCompletion
+	claudeChat.requestBody = func(stream bool) string {
+		return strings.ReplaceAll(parityCodexIngress().requestBody(stream), parityCodexModel, parityAnthropicModel)
+	}
+	for _, in := range append(parityIngresses(), responses, claudeChat) {
+		for _, mode := range []auth.RoutingPolicyMode{auth.RoutingPolicyPassthrough, auth.RoutingPolicyAssigned} {
+			for _, subscriptionOnly := range []bool{false, true} {
+				t.Run(in.name+"/"+string(mode)+"/subscription_only="+boolLit(subscriptionOnly), func(t *testing.T) {
+					subscriptionErr := upstreamErr(http.StatusServiceUnavailable, `{"error":{"type":"overloaded_error"}}`)
+					if in.name == claudeChat.name {
+						subscriptionErr = anthropicSubscriptionModelUnavailable(in.model)
+					}
+					upstream := &parityUpstream{subErr: subscriptionErr, okBody: in.upstreamOK(false)}
+					service := in.parityService(upstream)
+					authService := auth.NewService(nil, nil, nil, nil, nil, nil, time.Now).WithRoutingPolicies(routingPolicyStub{mode: mode}, nil)
+					ctx, err := authService.WithRoutingPolicy(in.subCtx(), parityInstallationID)
+					require.NoError(t, err)
+					ctx, err = authService.WithRoutingAssignment(ctx, parityInstallationID, "user")
+					require.NoError(t, err)
+					if subscriptionOnly {
+						ctx = billing.WithSubscriptionOnly(ctx, billing.SubscriptionOnlyCreditsDepleted)
+					}
+					recorder, request, body := in.request(t, false)
+					err = in.call(service, ctx, body, recorder, request)
+					if subscriptionOnly {
+						require.Error(t, err)
+						assert.Zero(t, upstream.paidDispatches)
+					} else {
+						require.NoError(t, err)
+						assert.Equal(t, http.StatusOK, recorder.Code)
+						assert.Contains(t, recorder.Body.String(), "hi")
+						assert.Equal(t, 1, upstream.paidDispatches)
+					}
+					assert.Positive(t, upstream.subDispatches)
+					for _, servedModel := range upstream.servedModels {
+						assert.Equal(t, in.model, servedModel, "credential recovery must never substitute a model")
+					}
+				})
+			}
+		}
 	}
 }
 

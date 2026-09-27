@@ -169,9 +169,10 @@ const (
 type ModelID string
 
 const (
-	ModelIDClaudeHaiku45 ModelID = "claude-haiku-4-5"
-	ModelIDClaudeOpus48  ModelID = "claude-opus-4-8"
-	ModelIDGPT55         ModelID = "gpt-5.5"
+	ModelIDClaudeHaiku45  ModelID = "claude-haiku-4-5"
+	ModelIDClaudeSonnet46 ModelID = "claude-sonnet-4-6"
+	ModelIDClaudeOpus48   ModelID = "claude-opus-4-8"
+	ModelIDGPT55          ModelID = "gpt-5.5"
 )
 
 func (id ModelID) String() string {

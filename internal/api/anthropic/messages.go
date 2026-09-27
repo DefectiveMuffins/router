@@ -58,7 +58,7 @@ func MessagesHandler(svc *proxy.Service, authSvc *auth.Service) gin.HandlerFunc 
 			ctx = proxy.ResolveUserFromContext(ctx, authSvc, middleware.InstallationFrom(c))
 			ctx, err = proxy.ResolveRoutingAssignment(ctx, authSvc, middleware.InstallationFrom(c))
 			if err != nil {
-				log.Error("Failed to resolve routing assignment", "err", err)
+				log.Error("Failed to resolve routing assignment", "installation_id", middleware.InstallationFrom(c).ID, "err", err)
 				c.Header("Retry-After", "1")
 				writeAnthropicError(c, http.StatusServiceUnavailable, "api_error", "Routing policy temporarily unavailable.")
 				return
