@@ -206,6 +206,14 @@ func TestWithoutModelsKeep_PreservesIndependentExclusions(t *testing.T) {
 		"with no keep list, overflow readmission still drops the overflowed model")
 }
 
+func TestContextWindowOnlyExclusions_DropsAdmittedAndUnsigned(t *testing.T) {
+	overflowed := []string{"claude-sonnet-4-5", "claude-opus-5", "gemini-3.1-pro-preview"}
+	out := contextWindowOnlyExclusions(overflowed, []string{"claude-opus-5"}, []string{"gemini-3.1-pro-preview"})
+	assert.Equal(t, map[string]struct{}{"claude-sonnet-4-5": {}}, out,
+		"admitted models already serve and unsigned-history models stay out for their own reason")
+	assert.Nil(t, contextWindowOnlyExclusions(nil, nil, nil))
+}
+
 func TestIsUpstreamContextOverflow_ProviderShapes(t *testing.T) {
 	overflow := func(status int, body string) error {
 		return &providers.UpstreamErrorResponse{Status: status, Body: []byte(body)}

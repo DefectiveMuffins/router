@@ -172,6 +172,7 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 		ExcludedModels:                   excluded,
 		AllowedModels:                    allowedModelsForRequest(ctx),
 		SafetyExcludedModels:             withoutModelsKeep(s.safetyExcludedModels(env, outputReserve, enabledProviders), overflowAdmitted, geminiUnsigned),
+		ContextWindowExcludedModels:      contextWindowOnlyExclusions(ctxOverflowed, overflowAdmitted, geminiUnsigned),
 		PreferredModels:                  s.preferredModelsForRequest(ctx),
 		SubscriptionStatePreferredModels: subscriptionStatePreferredModelsFromContext(ctx),
 		RoutingKnobs:                     router.RoutingKnobsFromContext(ctx),

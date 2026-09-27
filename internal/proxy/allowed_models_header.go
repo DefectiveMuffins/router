@@ -164,7 +164,15 @@ func (s *Service) readmitForcedModel(
 	if _, ok := s.policyExcludedModels(ctx)[pin.Model]; ok {
 		return excluded
 	}
-	if forcedModelOverflowsWindow(env, feats, pin) {
+	outputReserve := contextWindowOutputReserve
+	if feats.MaxTokens > outputReserve {
+		outputReserve = feats.MaxTokens
+	}
+	estimate := env.ContextOverflowTokenEstimate()
+	if modelStripsAnthropicSignatures(pin.Model) {
+		estimate -= env.SignatureTokenSavings()
+	}
+	if estimate+outputReserve > contextWindowForRequest(pin.Model, pin.Provider) {
 		return excluded
 	}
 	out := make(map[string]struct{}, len(excluded))

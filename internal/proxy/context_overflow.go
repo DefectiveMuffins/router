@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"weave-os/router/internal/providers"
-	"weave-os/router/internal/router/sessionpin"
-	"weave-os/router/internal/translate"
 )
 
 // contextOverflowMessage leads with Anthropic's own wording: Claude Code keys
@@ -50,19 +48,12 @@ func isUpstreamContextOverflow(err error) bool {
 	return strings.Contains(body, "input token count") && strings.Contains(body, "exceeds the maximum")
 }
 
-// forcedModelOverflowsWindow reports whether the request plus its reply
-// reserve exceeds the forced model's context window, under the same estimate
-// the context-window pre-filter uses.
-func forcedModelOverflowsWindow(env *translate.RequestEnvelope, feats translate.RoutingFeatures, pin sessionpin.Pin) bool {
-	outputReserve := contextWindowOutputReserve
-	if feats.MaxTokens > outputReserve {
-		outputReserve = feats.MaxTokens
-	}
-	estimate := env.ContextOverflowTokenEstimate()
-	if modelStripsAnthropicSignatures(pin.Model) {
-		estimate -= env.SignatureTokenSavings()
-	}
-	return estimate+outputReserve > contextWindowForRequest(pin.Model, pin.Provider)
+// contextWindowOnlyExclusions returns the models the context-window pre-filter
+// excluded and nothing else did. overflowed already omits models excluded
+// before the pre-filter ran; admitted models were re-admitted for the upstream
+// to decide, and gemini-unsigned models stay out for a reason of their own.
+func contextWindowOnlyExclusions(overflowed, admitted, geminiUnsigned []string) map[string]struct{} {
+	return withoutModels(withoutModels(modelSet(overflowed), admitted), geminiUnsigned)
 }
 
 // isContextOverflow reports whether err means the request cannot fit any
