@@ -240,6 +240,7 @@ func (s *Service) WithRoutingPolicy(ctx context.Context, installationID string) 
 			return ctx, fmt.Errorf("unrecognized installation routing mode %q: %w", policy.Mode, ErrRoutingPolicyUnavailable)
 		}
 		if s.routingPolicyCache.generation(installationID) == generation {
+			ctx = context.WithValue(ctx, routingPolicyGenerationContextKey{}, generation)
 			return context.WithValue(ctx, routingPolicyContextKey{}, policy), nil
 		}
 	}
@@ -249,11 +250,21 @@ func (s *Service) WithRoutingPolicy(ctx context.Context, installationID string) 
 // WithRoutingAssignment treats a successfully read missing assignment as passthrough.
 func (s *Service) WithRoutingAssignment(ctx context.Context, installationID, routerUserID string) (context.Context, error) {
 	policy := RoutingPolicyFrom(ctx)
-	if policy.Mode != RoutingPolicyAssigned || routerUserID == "" {
-		return ctx, nil
-	}
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < 3; attempt++ {
 		generation := s.routingPolicyCache.generation(installationID)
+		admittedGeneration, _ := ctx.Value(routingPolicyGenerationContextKey{}).(uint64)
+		if admittedGeneration != generation {
+			var err error
+			ctx, err = s.WithRoutingPolicy(ctx, installationID)
+			if err != nil {
+				return ctx, err
+			}
+			policy = RoutingPolicyFrom(ctx)
+			continue
+		}
+		if policy.Mode != RoutingPolicyAssigned || routerUserID == "" {
+			return ctx, nil
+		}
 		routerOn, found := s.routingPolicyCache.assignment(installationID, routerUserID, policy.Revision, generation)
 		if !found {
 			var err error

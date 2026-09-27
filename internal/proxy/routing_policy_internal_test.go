@@ -59,7 +59,29 @@ func TestExplicitRoutingPolicyPrecedesClassifierAndPins(t *testing.T) {
 			assert.False(t, turn.UsageBypass)
 			pins.mu.Lock()
 			defer pins.mu.Unlock()
-			assert.Empty(t, pins.getRoles)
+			assert.Equal(t, []string{forceModelSessionRole}, pins.getRoles)
+		})
+	}
+}
+
+func TestRoutingPolicyPreservesExplicitForcedModel(t *testing.T) {
+	for _, mode := range []auth.RoutingPolicyMode{auth.RoutingPolicyPassthrough, auth.RoutingPolicyAssigned} {
+		t.Run(string(mode), func(t *testing.T) {
+			service := NewService(&blindExperimentRouterSpy{err: errors.New("scorer must not run")}, nil, nil, false, nil, newStubPinStore(), false, providers.ProviderAnthropic, "claude-haiku-4-5", nil)
+			authService := auth.NewService(nil, nil, nil, nil, nil, nil, time.Now).WithRoutingPolicies(routingPolicyStub{mode: mode}, nil)
+			ctx, err := authService.WithRoutingPolicy(context.Background(), "installation")
+			require.NoError(t, err)
+			ctx, err = authService.WithRoutingAssignment(ctx, "installation", "user")
+			require.NoError(t, err)
+			envelope, err := translate.ParseAnthropic([]byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}]}`))
+			require.NoError(t, err)
+			turn, err := service.runTurnLoop(ctx, envelope, envelope.RoutingFeatures(false), "api-key", uuid.New(), "", http.Header{}, router.Request{
+				RequestedModel: "claude-sonnet-4-6", ForceModel: "claude-haiku-4-5", EnabledProviders: map[string]struct{}{providers.ProviderAnthropic: {}},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "claude-haiku-4-5", turn.Decision.Model)
+			assert.Equal(t, translate.ReasonUserForceModel, turn.Decision.Reason)
+			assert.False(t, turn.CallerModelPassthrough)
 		})
 	}
 }

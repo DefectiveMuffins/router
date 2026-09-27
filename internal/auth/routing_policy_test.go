@@ -95,6 +95,23 @@ func TestRoutingPolicyDefaultsAndAssignments(t *testing.T) {
 	}
 }
 
+func TestRoutingAssignmentRefreshesPolicyWhenInvalidatedAfterAdmission(t *testing.T) {
+	cache := auth.NewRoutingPolicyCache(time.Minute)
+	fixture := &routingPolicyFixture{policy: auth.RoutingPolicy{Mode: auth.RoutingPolicyAssigned, Revision: 1}, assigned: true}
+	service := auth.NewService(nil, nil, nil, nil, auth.NoOpAPIKeyCache{}, nil, time.Now).WithRoutingPolicies(fixture, cache)
+	ctx, err := service.WithRoutingPolicy(context.Background(), "installation")
+	require.NoError(t, err)
+	fixture.policy = auth.RoutingPolicy{Mode: auth.RoutingPolicyAssigned, Revision: 2}
+	fixture.assigned = false
+	cache.InvalidateInstallation("installation")
+	ctx, err = service.WithRoutingAssignment(ctx, "installation", "user")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), auth.RoutingPolicyFrom(ctx).Revision)
+	assert.True(t, auth.RoutingPassthroughFrom(ctx))
+	assert.Equal(t, 2, fixture.policyReads)
+	assert.Equal(t, 1, fixture.userReads, "the revoked revision must never be queried")
+}
+
 func TestRoutingPolicyLookupErrorsAndInvalidation(t *testing.T) {
 	fixture := &routingPolicyFixture{policyErr: errors.New("database offline")}
 	cache := auth.NewRoutingPolicyCache(time.Minute)

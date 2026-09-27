@@ -766,7 +766,40 @@ func (s *Service) runTurnLoop(
 	res.AuthoritativePerTurn = authoritativePolicyTurn(res.TurnType) &&
 		s.authoritativePerTurnSelection(ctx)
 	res.PinRole = roleForTier(res.RequestedTier)
-	if auth.RoutingPassthroughFrom(ctx) {
+	// Resolve user-forced state before the policy's no-automatic-routing shortcut.
+	forceModelSessionKey := deriveForceModelSessionKeyForRequest(ctx, env, apiKeyID, threadSessionKey)
+	forceModelPin := sessionpin.Pin{}
+	forceModelFound := false
+	forceModelCleared := false
+	if req.ForceModel != "" {
+		canonicalModel, provider, known, effort := resolveForceModelWithEffort(req.ForceModel)
+		if !known {
+			return res, &ForcedModelUnknownError{Model: req.ForceModel}
+		}
+		forceModelPin = sessionpin.Pin{
+			SessionKey:     forceModelSessionKey,
+			Role:           forceModelSessionRole,
+			InstallationID: installationID,
+			Provider:       provider,
+			Model:          canonicalModel,
+			Effort:         effort,
+			Reason:         translate.ReasonUserForceModel,
+			PinnedUntil:    pinNeverExpires,
+		}
+		forceModelFound = true
+	}
+	if !forceModelFound {
+		forceModelPin, forceModelFound, forceModelCleared = s.loadForceModelSessionPin(ctx, forceModelSessionKey)
+	}
+	if forceModelFound {
+		binding, reason := s.forcedModelBinding(ctx, forceModelPin.Model, forceModelPin.Provider)
+		if reason != "" {
+			return res, &ForcedModelExcludedError{Model: forceModelPin.Model, Reason: reason}
+		}
+		forceModelPin.Provider = binding
+		req.ExcludedModels = s.readmitForcedModel(ctx, req, env, feats, forceModelPin)
+	}
+	if auth.RoutingPassthroughFrom(ctx) && !forceModelFound {
 		decision, err := s.callerModelPassthroughDecision(ctx, req)
 		if err != nil {
 			return res, err
@@ -807,38 +840,6 @@ func (s *Service) runTurnLoop(
 	}
 
 	// Force state is session-scoped so sub-agents inherit the parent choice.
-	forceModelSessionKey := deriveForceModelSessionKeyForRequest(ctx, env, apiKeyID, threadSessionKey)
-	forceModelPin := sessionpin.Pin{}
-	forceModelFound := false
-	forceModelCleared := false
-	if req.ForceModel != "" {
-		canonicalModel, provider, known, effort := resolveForceModelWithEffort(req.ForceModel)
-		if !known {
-			return res, &ForcedModelUnknownError{Model: req.ForceModel}
-		}
-		forceModelPin = sessionpin.Pin{
-			SessionKey:     forceModelSessionKey,
-			Role:           forceModelSessionRole,
-			InstallationID: installationID,
-			Provider:       provider,
-			Model:          canonicalModel,
-			Effort:         effort,
-			Reason:         translate.ReasonUserForceModel,
-			PinnedUntil:    pinNeverExpires,
-		}
-		forceModelFound = true
-	}
-	if !forceModelFound {
-		forceModelPin, forceModelFound, forceModelCleared = s.loadForceModelSessionPin(ctx, forceModelSessionKey)
-	}
-	if forceModelFound {
-		binding, reason := s.forcedModelBinding(ctx, forceModelPin.Model, forceModelPin.Provider)
-		if reason != "" {
-			return res, &ForcedModelExcludedError{Model: forceModelPin.Model, Reason: reason}
-		}
-		forceModelPin.Provider = binding
-		req.ExcludedModels = s.readmitForcedModel(ctx, req, env, feats, forceModelPin)
-	}
 	sessionForceControlFound := forceModelFound
 
 	// Discounts covered models' cost term by the caller's observed subscription

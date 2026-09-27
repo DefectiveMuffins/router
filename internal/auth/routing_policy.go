@@ -35,6 +35,7 @@ type RoutingPolicyRepository interface {
 }
 
 type routingPolicyContextKey struct{}
+type routingPolicyGenerationContextKey struct{}
 type routingDecisionContextKey struct{}
 
 // RoutingPolicyFrom returns the policy read at admission, including identity-less requests.
