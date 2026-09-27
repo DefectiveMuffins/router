@@ -85,17 +85,26 @@ const (
 	classifierMaxMessageCount    = 3
 )
 
+// OpenCodeCaller is the caller's OpenCode identity; the zero value is any
+// other client.
+type OpenCodeCaller struct {
+	// IsClient gates body fallbacks keyed on OpenCode's harness prompts, which
+	// another client could send verbatim.
+	IsClient bool
+	Agent    requestcontext.OpenCodeAgent
+}
+
 // DetectFromEnvelope classifies an inbound request. subAgentHint is the
 // optional x-weave-subagent-type header value.
 //
 // Conservative by design: false negatives (MainLoop) are safe, false
 // positives aren't, so each heuristic below is intentionally tight.
 func DetectFromEnvelope(env *translate.RequestEnvelope, feats translate.RoutingFeatures, subAgentHint string) TurnType {
-	return Detect(env, feats, subAgentHint, "")
+	return Detect(env, feats, subAgentHint, OpenCodeCaller{})
 }
 
 // Detect classifies an inbound request. Unknown OpenCode agents fall through.
-func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, subAgentHint string, openCodeAgent requestcontext.OpenCodeAgent) TurnType {
+func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, subAgentHint string, openCode OpenCodeCaller) TurnType {
 	if env == nil {
 		return MainLoop
 	}
@@ -103,10 +112,10 @@ func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, sub
 	if isProbe(feats) {
 		return Probe
 	}
-	if openCodeAgent == requestcontext.OpenCodeAgentTitle ||
+	if openCode.Agent == requestcontext.OpenCodeAgentTitle ||
 		isTitleGen(env, feats.HasTools) ||
 		(feats.TitleGenHint && env.SourceFormat() == translate.FormatOpenAI) ||
-		isOpenCodeTitleGen(env, feats) {
+		(openCode.IsClient && isOpenCodeTitleGen(env, feats)) {
 		return TitleGen
 	}
 	systemText := env.SystemText()
@@ -115,7 +124,7 @@ func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, sub
 	// format, which Claude Code always speaks. Gating on format keeps
 	// Codex/OpenAI clients — whose prompts can incidentally mention
 	// "compact" — out of the hard pin.
-	if openCodeAgent == requestcontext.OpenCodeAgentCompaction ||
+	if openCode.Agent == requestcontext.OpenCodeAgentCompaction ||
 		(env.SourceFormat() == translate.FormatAnthropic && isCompaction(systemText, lastUserText)) {
 		return Compaction
 	}
@@ -125,7 +134,7 @@ func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, sub
 	if env.SourceFormat() == translate.FormatAnthropic && isRecap(lastUserText) {
 		return Recap
 	}
-	if openCodeAgent == requestcontext.OpenCodeAgentExplore ||
+	if openCode.Agent == requestcontext.OpenCodeAgentExplore ||
 		isSubAgentDispatch(env.MetadataUserID(), env.AnthropicBillingHeader(), env.FirstUserMessageText(), subAgentHint) {
 		return SubAgentDispatch
 	}

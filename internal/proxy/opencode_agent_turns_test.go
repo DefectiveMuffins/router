@@ -31,10 +31,10 @@ const openCodeResponsesBody = `{
 const openCodeHardPinModel = "gpt-4o-mini"
 
 func newOpenCodeTurnSvc(fr *fakeRouter, store *fakePinStore) *proxy.Service {
-	openAIResp := func(w http.ResponseWriter) {
+	responsesResp := func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"id":"chatcmpl_1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+		_, _ = io.WriteString(w, `{"id":"resp_1","object":"response","output":[{"type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}]}`)
 	}
 	anthropicResp := func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
@@ -45,7 +45,7 @@ func newOpenCodeTurnSvc(fr *fakeRouter, store *fakePinStore) *proxy.Service {
 		fr,
 		map[string]providers.Client{
 			providers.ProviderAnthropic: &fakeProvider{proxyResponse: anthropicResp},
-			providers.ProviderOpenAI:    &fakeProvider{proxyResponse: openAIResp},
+			providers.ProviderOpenAI:    &fakeProvider{proxyResponse: responsesResp},
 		},
 		nil, false, nil, store, false,
 		providers.ProviderOpenAI, openCodeHardPinModel, nil,
@@ -188,39 +188,67 @@ func TestService_OpenCodeAgent_BuildKeepsToolOutputCommandsActionable(t *testing
 	assert.Equal(t, "gpt-5", rec.Header().Get(proxy.HeaderRouterModel))
 }
 
-// OpenCode 2.x sends no lifecycle header or Session-Id, so every title call
-// from one API key derives the same session key from its constant system
-// prompt. It must hard-pin from its body and never read or write that pin.
-func TestService_OpenCodeHeaderlessTitleHardPinsWithoutTouchingThePin(t *testing.T) {
-	const mainBody = `{"model":"auto","stream":false,
+const (
+	openCodeHeaderlessMainBody = `{"model":"auto","stream":false,
 		"tools":[{"type":"function","name":"bash","parameters":{"type":"object"}}],
 		"input":[
 			{"role":"system","content":"You are an AI agent running in OpenCode."},
 			{"role":"user","content":"who are you?"}]}`
-	const titleBody = `{"model":"auto","stream":false,"input":[
+	openCodeHeaderlessTitleBody = `{"model":"auto","stream":false,"input":[
 		{"role":"system","content":"You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later."},
 		{"role":"user","content":"who are you?"}]}`
-	store := newFakePinStore()
-	fr := &fakeRouter{decision: router.Decision{Provider: providers.ProviderOpenAI, Model: "gpt-4o", Reason: "cluster"}}
-	svc := newOpenCodeTurnSvc(fr, store)
+)
+
+func headerlessSender(t *testing.T, svc *proxy.Service, clientApp string) func(body string) *httptest.ResponseRecorder {
+	t.Helper()
 	apiKeyID := uuid.New().String()
-	send := func(body string) *httptest.ResponseRecorder {
+	return func(body string) *httptest.ResponseRecorder {
 		httpReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(""))
-		httpReq.Header.Set("X-App", proxy.ClientAppOpencode)
+		httpReq.Header.Set("X-App", clientApp)
 		ctx := context.WithValue(authedCtx(apiKeyID), proxy.ClientIdentityContextKey{}, proxy.ClientIdentityFromHeaders(httpReq.Header))
 		rec := httptest.NewRecorder()
 		require.NoError(t, svc.ProxyOpenAIResponses(ctx, []byte(body), rec, httpReq))
 		return rec
 	}
+}
 
-	send(mainBody)
+// OpenCode 2.x sends no lifecycle header or Session-Id, so every title call
+// from one API key derives the same session key from its constant system
+// prompt. It must hard-pin from its body, render no routing marker (OpenCode
+// titles the session with the reply's first line), and neither serve nor
+// rewrite the conversation's automatic pin.
+func TestService_OpenCodeHeaderlessTitleHardPinsWithoutTouchingThePin(t *testing.T) {
+	store := newFakePinStore()
+	store.persistUpserts = true
+	fr := &fakeRouter{decision: router.Decision{Provider: providers.ProviderOpenAI, Model: "gpt-4o", Reason: "cluster"}}
+	send := headerlessSender(t, newOpenCodeTurnSvc(fr, store), proxy.ClientAppOpencode)
+
+	rec := send(openCodeHeaderlessMainBody)
 	require.Len(t, store.upserts, 1)
+	require.Contains(t, rec.Body.String(), "Weave Router", "main-loop turns carry the routing marker")
 
 	for range 2 {
-		rec := send(titleBody)
-		assert.Equal(t, openCodeHardPinModel, rec.Header().Get(proxy.HeaderRouterModel))
+		getsBefore := store.getCalls
+		rec := send(openCodeHeaderlessTitleBody)
+		assert.Equal(t, openCodeHardPinModel, rec.Header().Get(proxy.HeaderRouterModel), "the automatic pin must not serve a title turn")
+		assert.NotContains(t, rec.Body.String(), "Weave Router", "a routing marker would become the session title")
+		assert.Equal(t, 2, store.getCalls-getsBefore, "title turns read only session and legacy thread force state")
 	}
 
 	assert.Equal(t, 1, fr.routeCalls, "title generation must bypass the scorer")
 	assert.Len(t, store.upserts, 1, "title generation must not anchor a pin")
+}
+
+// The title-agent prompt is only trusted from OpenCode: another client sending
+// the same body keeps ordinary scoring and its session pin.
+func TestService_OpenCodeTitlePromptIgnoredForOtherClients(t *testing.T) {
+	store := newFakePinStore()
+	fr := &fakeRouter{decision: router.Decision{Provider: providers.ProviderOpenAI, Model: "gpt-4o", Reason: "cluster"}}
+	send := headerlessSender(t, newOpenCodeTurnSvc(fr, store), proxy.ClientAppCodex)
+
+	rec := send(openCodeHeaderlessTitleBody)
+
+	assert.Equal(t, 1, fr.routeCalls, "a non-OpenCode caller cannot select the title hard-pin with the prompt")
+	assert.Equal(t, "gpt-4o", rec.Header().Get(proxy.HeaderRouterModel))
+	assert.NotEmpty(t, store.upserts, "a scored turn anchors the conversation pin")
 }

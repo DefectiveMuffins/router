@@ -619,7 +619,7 @@ func TestDetect_OpenCodeAgent(t *testing.T) {
 			env, err := translate.ParseOpenAI([]byte(tc.body))
 			require.NoError(t, err)
 			feats := env.RoutingFeatures(false)
-			assert.Equal(t, tc.want, turntype.Detect(env, feats, "", tc.agent))
+			assert.Equal(t, tc.want, turntype.Detect(env, feats, "", turntype.OpenCodeCaller{IsClient: true, Agent: tc.agent}))
 			if tc.agent == "" {
 				assert.Equal(t, tc.want, turntype.DetectFromEnvelope(env, feats, ""))
 			}
@@ -631,7 +631,7 @@ func TestDetect_OpenCodeAgentDoesNotOverrideProbe(t *testing.T) {
 	env, err := translate.ParseOpenAI([]byte(`{"model":"auto","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`))
 	require.NoError(t, err)
 	feats := env.RoutingFeatures(false)
-	assert.Equal(t, turntype.Probe, turntype.Detect(env, feats, "", requestcontext.OpenCodeAgentTitle))
+	assert.Equal(t, turntype.Probe, turntype.Detect(env, feats, "", turntype.OpenCodeCaller{IsClient: true, Agent: requestcontext.OpenCodeAgentTitle}))
 }
 
 // OpenCode 2.x does not load the lifecycle plugin, so its title call arrives
@@ -642,6 +642,7 @@ func TestDetect_OpenCodeTitlePromptWithoutHeader(t *testing.T) {
 	require.NoError(t, err)
 	p := string(prompt)
 	const tools = `"tools":[{"type":"function","name":"bash","parameters":{"type":"object"}}],`
+	openCode := turntype.OpenCodeCaller{IsClient: true}
 	tests := []struct {
 		name string
 		body string
@@ -719,7 +720,7 @@ func TestDetect_OpenCodeTitlePromptWithoutHeader(t *testing.T) {
 			require.NoError(t, err)
 			env, err := translate.ParseOpenAI(chat)
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, turntype.Detect(env, env.RoutingFeatures(false), "", ""))
+			assert.Equal(t, tc.want, turntype.Detect(env, env.RoutingFeatures(false), "", openCode))
 		})
 	}
 
@@ -727,6 +728,18 @@ func TestDetect_OpenCodeTitlePromptWithoutHeader(t *testing.T) {
 		env, err := translate.ParseAnthropic([]byte(`{"model":"auto","max_tokens":32000,"system":` + p + `,
 			"messages":[{"role":"user","content":"who are you?"}]}`))
 		require.NoError(t, err)
-		assert.Equal(t, turntype.TitleGen, turntype.Detect(env, env.RoutingFeatures(false), "", ""))
+		assert.Equal(t, turntype.TitleGen, turntype.Detect(env, env.RoutingFeatures(false), "", openCode))
+	})
+
+	t.Run("the same body from another client stays main_loop", func(t *testing.T) {
+		chat, _, _, err := translate.ResponsesToChatCompletions([]byte(`{"model":"auto","stream":true,"input":[
+			{"role":"system","content":` + p + `},
+			{"role":"user","content":"who are you?"}]}`))
+		require.NoError(t, err)
+		env, err := translate.ParseOpenAI(chat)
+		require.NoError(t, err)
+		feats := env.RoutingFeatures(false)
+		assert.Equal(t, turntype.MainLoop, turntype.Detect(env, feats, "", turntype.OpenCodeCaller{}))
+		assert.Equal(t, turntype.MainLoop, turntype.DetectFromEnvelope(env, feats, ""))
 	})
 }
