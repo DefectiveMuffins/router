@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,9 @@ import (
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/proxy"
 	"weave-os/router/internal/router"
+	"weave-os/router/internal/router/catalog"
+	"weave-os/router/internal/router/hmm"
+	"weave-os/router/internal/router/policy"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -186,4 +190,88 @@ func TestCrossFormatResponsesOverflowClassifiesAsContextWindowExceeded(t *testin
 			})
 		}
 	}
+}
+
+// overflowPolicy is a sidecar that always picks the first offered candidate.
+type overflowPolicy struct{}
+
+func (overflowPolicy) Decide(_ context.Context, query policy.Query) (policy.Result, error) {
+	if len(query.Candidates) == 0 {
+		return policy.Result{}, errors.New("no candidates offered")
+	}
+	return policy.Result{Model: query.Candidates[0].CatalogID, Provider: query.Candidates[0].Provider}, nil
+}
+
+// hmmOverflowService routes on the HMM policy path over models, all served by
+// provider through upstream.
+func hmmOverflowService(provider string, upstream providers.Client, models ...string) *proxy.Service {
+	available := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		available[model] = struct{}{}
+	}
+	resolver := policy.NewResolver(available, map[string]struct{}{provider: {}}, func(m catalog.Model) string { return m.ID }, policy.ManagedProviderPolicy())
+	routing := policy.NewSidecarRouter(policy.SidecarRouterConfig{Strategy: router.StrategyHMM, Unavailable: hmm.ErrHMMUnavailable}, overflowPolicy{}, resolver)
+	return proxy.NewService(&fakeRouter{}, map[string]providers.Client{provider: upstream},
+		nil, false, nil, newFakePinStore(), false, provider, models[0], nil).
+		WithAvailableModels(available).
+		WithPolicyStrategy(policy.StrategySpec{Strategy: router.StrategyHMM, Router: routing, Unavailable: hmm.ErrHMMUnavailable})
+}
+
+// A request whose estimate rules out every model reaches the widest one on
+// the HMM path too, so the provider's exact count decides and a real overflow
+// returns as the client's native prompt-too-long, never "no model is routable".
+func TestHMMTotalOverflowReachesUpstreamOnEveryIngress(t *testing.T) {
+	// ~1.1M tokens of user text: past every window, by the pre-filter's byte
+	// estimate and the resolver's text estimate alike.
+	prompt := strings.Repeat("overflow ", 500_000)
+	for _, test := range []struct {
+		name, provider, path, body, admitted string
+		models                               []string
+		send                                 func(*proxy.Service, context.Context, []byte, http.ResponseWriter, *http.Request) error
+	}{
+		{"messages", providers.ProviderAnthropic, "/v1/messages",
+			`{"model":"claude-opus-4-8","max_tokens":1024,"messages":[{"role":"user","content":"` + prompt + `"}]}`,
+			"claude-opus-4-8", []string{"claude-opus-4-8", "claude-haiku-4-5"}, (*proxy.Service).ProxyMessages},
+		{"chat", providers.ProviderAnthropic, "/v1/chat/completions",
+			`{"model":"claude-opus-4-8","messages":[{"role":"user","content":"` + prompt + `"}]}`,
+			"claude-opus-4-8", []string{"claude-opus-4-8", "claude-haiku-4-5"}, (*proxy.Service).ProxyOpenAIChatCompletion},
+		{"responses", providers.ProviderAnthropic, "/v1/responses",
+			`{"model":"claude-opus-4-8","input":"` + prompt + `"}`,
+			"claude-opus-4-8", []string{"claude-opus-4-8", "claude-haiku-4-5"}, (*proxy.Service).ProxyOpenAIResponses},
+		{"gemini", providers.ProviderGoogle, "/v1beta/models/gemini-2.5-pro:generateContent",
+			`{"contents":[{"role":"user","parts":[{"text":"` + prompt + `"}]}]}`,
+			"gemini-2.5-pro", []string{"gemini-2.5-pro"}, (*proxy.Service).ProxyGeminiGenerateContent},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := overflowingProvider(`{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 1100000 tokens > 1000000 maximum"}}`)
+			svc := hmmOverflowService(test.provider, upstream, test.models...)
+			ctx := router.WithStrategy(authedCtx(overflowInstallationID), router.StrategyHMM)
+
+			err := test.send(svc, ctx, []byte(test.body), httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, test.path, nil))
+
+			require.Error(t, err)
+			cls, ok := proxy.ClassifyDispatchError(err)
+			require.True(t, ok)
+			assert.Equal(t, proxy.DispatchErrorContextWindowExceeded, cls.Kind, "got %v", err)
+			require.Len(t, upstream.proxyBodies, 1, "the widest model is dispatched so the provider decides")
+		})
+	}
+}
+
+// When a policy reason, not size, empties the pool, the org still hears it is
+// its model selection to widen.
+func TestHMMPolicyEmptiedPoolStaysNoRoutableModels(t *testing.T) {
+	upstream := &fakeProvider{}
+	svc := hmmOverflowService(providers.ProviderAnthropic, upstream, "claude-opus-4-8", "claude-haiku-4-5")
+	ctx := context.WithValue(router.WithStrategy(authedCtx(overflowInstallationID), router.StrategyHMM),
+		proxy.InstallationExcludedModelsContextKey{}, []string{"claude-opus-4-8", "claude-haiku-4-5"})
+	body := []byte(`{"model":"claude-opus-4-8","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`)
+
+	err := svc.ProxyMessages(ctx, body, httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/messages", nil))
+
+	require.Error(t, err)
+	cls, ok := proxy.ClassifyDispatchError(err)
+	require.True(t, ok)
+	assert.Equal(t, proxy.DispatchErrorNoRoutableModels, cls.Kind, "got %v", err)
+	assert.Empty(t, upstream.proxyBodies)
 }

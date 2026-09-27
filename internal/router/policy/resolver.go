@@ -334,7 +334,7 @@ func (r *Resolver) Resolve(req router.Request) ResolvedCandidates {
 			continue
 		}
 		contextWindow := catalog.ContextWindowFor(id)
-		if requiredContextTokens(req) > contextWindow {
+		if exceedsContextWindow(req, id, contextWindow) {
 			diagnostics = append(diagnostics, Diagnostic{CatalogID: id, RosterID: rosterID, Reason: ExclusionContextWindow})
 			continue
 		}
@@ -472,6 +472,17 @@ func estimatedCostUSD(req router.Request, pricing catalog.Pricing) float64 {
 
 func requiredContextTokens(req router.Request) int {
 	return max(req.EstimatedInputTokens, 0) + expectedOutputTokens(req)
+}
+
+// exceedsContextWindow reports whether the request's estimate rules the model
+// out. A model the proxy admitted on total overflow is never ruled out here:
+// its provider's exact count decides, so a real overflow reaches the client as
+// the native prompt-too-long error it compacts on.
+func exceedsContextWindow(req router.Request, catalogID string, contextWindow int) bool {
+	if _, admitted := req.OverflowAdmittedModels[catalogID]; admitted {
+		return false
+	}
+	return requiredContextTokens(req) > contextWindow
 }
 
 func expectedOutputTokens(req router.Request) int {

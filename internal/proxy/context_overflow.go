@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"weave-os/router/internal/providers"
+	"weave-os/router/internal/router/policy"
 )
 
 // contextOverflowMessage leads with Anthropic's own wording: Claude Code keys
@@ -57,9 +58,11 @@ func contextWindowOnlyExclusions(overflowed, admitted, geminiUnsigned []string) 
 }
 
 // isContextOverflow reports whether err means the request cannot fit any
-// model's window, whether the router or the upstream decided it.
+// model's window, whether the router or the upstream decided it. The router
+// never rewrites client history to make it fit: the client receives its native
+// prompt-too-long error and compacts itself.
 func isContextOverflow(err error) bool {
-	return errors.Is(err, ErrContextWindowExceeded) || isUpstreamContextOverflow(err)
+	return errors.Is(err, policy.ErrContextWindowExceeded) || isUpstreamContextOverflow(err)
 }
 
 // contextWindowExceededClass renders every context overflow the same way so

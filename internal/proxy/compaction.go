@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"slices"
 
 	"weave-os/router/internal/providers"
@@ -12,11 +11,6 @@ import (
 	"weave-os/router/internal/router/policy"
 	"weave-os/router/internal/router/sessionpin"
 )
-
-// ErrContextWindowExceeded is returned when a request cannot fit any eligible
-// model's window. The router never rewrites client history to make it fit:
-// the client receives its native prompt-too-long error and compacts itself.
-var ErrContextWindowExceeded = errors.New("proxy: request context exceeds every eligible model's window")
 
 // compactionModelOrDefault returns the configured Sonnet-class model for
 // Claude Code's own compaction turn.

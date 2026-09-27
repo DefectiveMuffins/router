@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"weave-os/router/internal/providers"
+	"weave-os/router/internal/router/policy"
 	"weave-os/router/internal/translate"
 
 	"github.com/stretchr/testify/assert"
@@ -226,12 +227,12 @@ func TestIsUpstreamContextOverflow_ProviderShapes(t *testing.T) {
 	} {
 		assert.False(t, isUpstreamContextOverflow(err), name)
 	}
-	assert.True(t, isContextOverflow(fmt.Errorf("router: %w", ErrContextWindowExceeded)))
+	assert.True(t, isContextOverflow(fmt.Errorf("router: %w", policy.ErrContextWindowExceeded)))
 }
 
 func TestClassifyDispatchError_ContextOverflowIsNative(t *testing.T) {
 	for name, err := range map[string]error{
-		"router":   fmt.Errorf("wrapped: %w", ErrContextWindowExceeded),
+		"router":   fmt.Errorf("wrapped: %w", policy.ErrContextWindowExceeded),
 		"upstream": &providers.UpstreamErrorResponse{Status: 400, Body: []byte(`{"error":{"code":"context_length_exceeded"}}`)},
 	} {
 		cls, ok := ClassifyDispatchError(err)

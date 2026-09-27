@@ -219,6 +219,28 @@ func TestResolverIncludesExpectedOutputInContextBudget(t *testing.T) {
 	})
 }
 
+func TestResolverKeepsOverflowAdmittedModels(t *testing.T) {
+	resolver := policy.NewResolver(
+		set("claude-opus-4-8", "claude-sonnet-4-6"),
+		set(providers.ProviderAnthropic),
+		catalogRosterID,
+		policy.ManagedProviderPolicy(),
+	)
+
+	resolved := resolver.Resolve(router.Request{
+		EstimatedInputTokens:   catalog.ContextWindowFor("claude-opus-4-8") + 1,
+		OverflowAdmittedModels: set("claude-opus-4-8"),
+	})
+
+	assert.Equal(t, []string{"claude-opus-4-8"}, resolved.CandidateModels(),
+		"the provider's exact count decides for a model the proxy admitted on total overflow")
+	assert.Equal(t, []policy.Diagnostic{{
+		CatalogID: "claude-sonnet-4-6",
+		RosterID:  "claude-sonnet-4-6",
+		Reason:    policy.ExclusionContextWindow,
+	}}, resolved.Diagnostics)
+}
+
 func TestResolverIncludesLiveCandidateEconomics(t *testing.T) {
 	resolver := policy.NewResolver(
 		set("claude-opus-4-8"),

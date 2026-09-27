@@ -186,6 +186,12 @@ type Request struct {
 	// A /force-model pin on one of these is still dispatched, so the provider's
 	// exact token count decides instead of the estimate.
 	ContextWindowExcludedModels map[string]struct{}
+	// OverflowAdmittedModels is the set the context-window pre-filter kept
+	// when its byte estimate ruled out every model: the widest-window ones,
+	// sent anyway so the provider's exact count decides and a real overflow
+	// reaches the client as its native prompt-too-long error. Downstream
+	// context-window checks must not re-exclude these.
+	OverflowAdmittedModels map[string]struct{}
 	// AutomaticExcludedModels is the deployment-wide set Weave has withdrawn
 	// from AUTOMATIC selection. Deliberately not folded into ExcludedModels:
 	// that set is hard (it also rejects an explicit /force-model pin), whereas
