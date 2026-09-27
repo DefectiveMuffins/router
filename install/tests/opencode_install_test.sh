@@ -90,6 +90,17 @@ grep -Fq "OpenCode major version 2 is required" "$work/opencode-v1.err" || \
 [ ! -e "$bad_version_dir/opencode.json" ] || \
   fail "incompatible OpenCode version wrote a config"
 
+symlink_dir="$work/opencode-symlink"
+mkdir -p "$symlink_dir" "$work/symlink-target"
+ln -s "$work/symlink-target" "$symlink_dir/.weave"
+if (umask 022 && HOME="$home" XDG_CONFIG_HOME="$home/xdg" PATH="$test_path" NO_COLOR=1 \
+    WEAVE_ROUTER_KEY="rk_opencode_test" \
+    bash "$installer" --opencode --dir "$symlink_dir" --quiet --non-interactive \
+      --base-url http://127.0.0.1:9 >/dev/null 2>&1); then
+  fail "install wrote through a legacy plugin directory symlink"
+fi
+[ ! -e "$symlink_dir/opencode.json" ] || fail "install wrote the router key before rejecting the legacy symlink"
+
 run_install
 install_output="$(run_install_output)"
 grep -Fq "npx @weave-os/router login claude" <<<"$install_output" || fail "install did not print the managed enrollment command"
@@ -155,11 +166,17 @@ mkdir -p "$legacy_plugin_dir"
 printf '%s\n' 'export default legacyPlugin' >"$legacy_plugin_dir/opencode-weave.ts"
 printf '%s\n' 'export const legacyDirectives = true' >"$legacy_plugin_dir/directives.ts"
 printf '%s\n' 'export const legacyClassifier = true' >"$legacy_plugin_dir/classifier-thread.ts"
-jq --arg plugin "$legacy_plugin_dir/opencode-weave.ts" '.plugin += [$plugin]' "$config" >"$config.tmp"
+jq --arg plugin "$legacy_plugin_dir/opencode-weave.ts" \
+  '.plugin += [$plugin] | .providers.weave = {name: "Legacy Weave"} | .providers["weave-codex"] = {name: "Legacy Codex"} | .providers["weave-claude"] = {name: "Legacy Claude"}' \
+  "$config" >"$config.tmp"
 mv "$config.tmp" "$config"
 run_uninstall
 [ "$(jq -r '.model' "$config")" = "google/gemini-3.8-flash" ] || fail "uninstall did not restore the direct model"
 [ "$(jq -r '(.provider // {}) | has("weave")' "$config")" = "false" ] || fail "uninstall left the Weave provider"
+[ "$(jq -r '(.providers // {}) | has("weave")' "$config")" = "false" ] || fail "uninstall left legacy providers.weave"
+[ "$(jq -r '(.providers // {}) | has("weave-codex")' "$config")" = "false" ] || fail "uninstall left legacy providers.weave-codex"
+[ "$(jq -r '(.providers // {}) | has("weave-claude")' "$config")" = "false" ] || fail "uninstall left legacy providers.weave-claude"
+[ "$(jq -r '.providers.other.name' "$config")" = "Other legacy provider" ] || fail "uninstall removed an unrelated legacy provider"
 [ "$(jq -r '.plugin | index("user-plugin") != null' "$config")" = "true" ] || fail "uninstall removed a user plugin"
 [ "$(jq -r '[.plugin[]? | select(tostring | endswith("/opencode-weave.ts"))] | length' "$config")" = "0" ] || fail "uninstall left the legacy plugin registration"
 [ ! -e "$legacy_plugin_dir/opencode-weave.ts" ] || fail "uninstall left the legacy plugin"

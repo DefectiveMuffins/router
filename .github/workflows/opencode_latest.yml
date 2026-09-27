@@ -22,7 +22,18 @@ jobs:
           formula="$(curl --fail --location --silent --show-error \
             https://raw.githubusercontent.com/anomalyco/homebrew-tap/HEAD/opencode-v2.rb)"
           version="$(printf '%s\n' "$formula" | sed -n 's/^  version "\([^"]*\)"$/\1/p' | head -n 1)"
-          checksum="$(printf '%s\n' "$formula" | sed -n '/^  on_linux do/,/^  end$/p' | grep 'sha256' | tail -n 1 | sed -E 's/.*"([0-9a-f]{64})".*/\1/')"
+          checksum="$(printf '%s\n' "$formula" | awk '
+            /^  on_linux do$/ { in_linux=1; next }
+            in_linux && /url "[^"]*opencode-linux-x64-baseline\.tar\.gz"/ {
+              if (getline > 0) {
+                sub(/^.*sha256 "/, "")
+                sub(/".*$/, "")
+                print
+                exit
+              }
+            }
+            in_linux && /^  end$/ { exit }
+          ')"
           test -n "$version" && test -n "$checksum"
           archive="$RUNNER_TEMP/opencode-v2.tar.gz"
           curl --fail --location --silent --show-error \

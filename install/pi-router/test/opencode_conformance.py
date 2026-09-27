@@ -119,10 +119,13 @@ class OpenCodeV2Conformance(unittest.TestCase):
     def assert_finished(self, events: list[dict]) -> None:
         self.assertFalse([event for event in events if event["type"] == "error"], events)
         self.assertEqual([event["part"]["text"] for event in events if event["type"] == "text"], [TEXT])
-        finishes = [event["part"] for event in events if event["type"] == "step_finish"]
-        self.assertTrue(finishes, events)
-        self.assertEqual(finishes[-1]["reason"], "stop")
-        self.assertEqual(finishes[-1]["tokens"], {
+        # step_finish is not reliably flushed to stdout before `run` exits on Linux.
+        exported = self.command([self.opencode, "session", "export", "--standalone", events[0]["sessionID"]]).stdout
+        messages = json.loads(exported[exported.index("{"):])["messages"]
+        assistant = [message for message in messages if message["type"] == "assistant"]
+        self.assertTrue(assistant, messages)
+        self.assertEqual(assistant[-1]["finish"], "stop")
+        self.assertEqual(assistant[-1]["tokens"], {
             "input": 9, "output": 6, "reasoning": 2,
             "cache": {"read": 3, "write": 0},
         })

@@ -1104,6 +1104,14 @@ write_opencode_config() {
     esac
   fi
 
+  # Validate cleanup paths before the key-bearing config is written.
+  local legacy_plugin_dir legacy_plugin_file legacy_plugin_files="opencode-weave.ts directives.ts classifier-thread.ts"
+  legacy_plugin_dir="$(dirname "$config_file")/.weave"
+  refuse_if_symlink "$legacy_plugin_dir"
+  for legacy_plugin_file in $legacy_plugin_files; do
+    refuse_if_symlink "$legacy_plugin_dir/$legacy_plugin_file"
+  done
+
   # Merge into any existing opencode.json. We always overwrite provider.weave
   # so re-install reflects the latest key/identity, but we leave the rest of the
   # file (other providers, mcp, agent settings) untouched. The managed model is
@@ -1146,20 +1154,16 @@ write_opencode_config() {
       }
     ')"
   fi
-  printf '%s\n' "$merged" >"$config_file"
 
-  local legacy_plugin_dir legacy_plugin_file
-  legacy_plugin_dir="$(dirname "$config_file")/.weave"
-  refuse_if_symlink "$legacy_plugin_dir"
-  for legacy_plugin_file in opencode-weave.ts directives.ts classifier-thread.ts; do
-    refuse_if_symlink "$legacy_plugin_dir/$legacy_plugin_file"
+  # 0600 before the key lands: even at user scope, mode 644 would leak the key
+  # to any local user on a shared box.
+  [ ! -f "$config_file" ] || chmod 600 "$config_file"
+  (umask 077 && printf '%s\n' "$merged" >"$config_file")
+
+  for legacy_plugin_file in $legacy_plugin_files; do
     [ ! -f "$legacy_plugin_dir/$legacy_plugin_file" ] || rm -f "$legacy_plugin_dir/$legacy_plugin_file"
   done
   rmdir "$legacy_plugin_dir" 2>/dev/null || true
-
-  # 0600: the file holds a router key. Even at user scope, mode 644 would
-  # leak the key to any local user on a shared box.
-  chmod 600 "$config_file"
 }
 
 # write_pi_models_config merges a managed `weave` provider into pi's

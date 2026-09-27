@@ -684,6 +684,14 @@ if [ "$target" = "opencode" ]; then
       | (if .provider["weave-claude"] then del(.provider["weave-claude"]) else . end)
       | (if .provider["weave-codex"] then del(.provider["weave-codex"]) else . end)
       | (if (.provider // {}) == {} then del(.provider) else . end)
+      | (if (.providers | type) == "object"
+           then .providers |= del(.weave, ."weave-codex", ."weave-claude")
+           else .
+         end)
+      | (if (.providers | type) == "object" and (.providers | length) == 0
+           then del(.providers)
+           else .
+         end)
       | (if (.plugin | type) == "array"
            then .plugin |= map(select((tostring | test("(^|/)opencode-weave\\.ts$")) | not))
            else .
