@@ -181,6 +181,12 @@ npx --package @weave-os/router -y -- weave-router disable-routing
 
 ### opencode (`--opencode`)
 
+The installer targets OpenCode major version 2. If `opencode` is on `PATH`, the
+installer checks its version and exits before writing config unless the major
+version is `2`. When the CLI is not installed yet, the installer warns and can
+prepare the config for a later v2 install. OpenCode v2 uses the configured
+Responses provider directly; the installer does not install a plugin.
+
 **User scope:**
 
 | Path                                       | Purpose                                                       |
@@ -201,6 +207,9 @@ Installation activates `weave/auto` and parks an existing direct model so
 the managed `provider.weave` block and migrates legacy `weave/*` choices to
 `weave/auto`; other providers, MCP servers, and agents stay untouched.
 `--uninstall --opencode` strips the block and restores the parked model.
+Re-install also removes stale v1 plugin registrations/files while preserving
+other plugins. OpenCode v2 supplies its own session headers; the router uses
+those for session continuity.
 
 **Onboarding flow for a new teammate (any target):**
 
@@ -453,10 +462,10 @@ installer owns the config file.
 | router-off / on / status | `/router-off` … | `$router-off` … (plus `$disable-routing`) | — | — | — |
 | router-models (`models`) | `/router-models` | `$router-models` | — | — | — |
 
-- **opencode** rewrites `$rf` / `$fm` / `$ufm` / `$router-session` (and slash
-  forms) in the plugin `chat.message` hook into the leading-space `/…` prompts
-  the router already parses. Local toggles stay CLI-only (`npx @weave-os/router
-  off|on|status --opencode`).
+- **opencode** uses native command files for `/force-model`, `/unforce-model`,
+  and `/router-feedback`; the router also recognizes leading `$` directive
+  spellings if submitted directly. Local toggles stay CLI-only
+  (`npx @weave-os/router off|on|status --opencode`).
 - **Codex** uses `$name` skills because Codex reserves `/…` for built-ins; each
   skill sends the leading-space prompt form.
 - **pi** implements `/fm` and `/ufm` in the `@weave-os/router` extension rather

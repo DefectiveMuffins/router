@@ -72,9 +72,8 @@ func TestClassifierRequestV4CarriesGoOwnedTurnFacts(t *testing.T) {
 	assert.JSONEq(t, `["Read","Bash"]`, string(wire["invoked_tools"]))
 }
 
-// OpenCode reaches the classifier under its own harness, with the lifecycle
-// turn type PR 1346 classifies from the plugin header, so the sidecar can tell
-// its traffic apart from generic API callers.
+// OpenCode keeps its own harness identity in classifier facts, distinct from
+// generic API callers; Go supplies the turn classification.
 func TestClassifierRequestV4OpenCodeHarness(t *testing.T) {
 	query := turnFactsQuery()
 	query.ClientApp = "opencode"

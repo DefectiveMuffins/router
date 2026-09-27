@@ -9,20 +9,30 @@ on:
 permissions:
   contents: read
 
-# Deliberately separate from the required Test gate: latest may break before
-# the supported CLI/plugin pin has been reviewed and updated.
+# Deliberately separate from the required Test gate: latest v2 may break
+# before the supported CLI pin has been reviewed and updated.
 jobs:
   latest:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "24"
-      - name: Install latest OpenCode
+      - name: Install latest OpenCode v2
         run: |
-          npm install --global opencode-ai@latest --no-audit --no-fund
-          echo "OPENCODE_EXPECTED_VERSION=$(opencode --version)" >> "$GITHUB_ENV"
-      - name: Run real CLI and plugin-loader compatibility
+          formula="$(curl --fail --location --silent --show-error \
+            https://raw.githubusercontent.com/anomalyco/homebrew-tap/HEAD/opencode-v2.rb)"
+          version="$(printf '%s\n' "$formula" | sed -n 's/^  version "\([^"]*\)"$/\1/p' | head -n 1)"
+          checksum="$(printf '%s\n' "$formula" | sed -n '/^  on_linux do/,/^  end$/p' | grep 'sha256' | tail -n 1 | sed -E 's/.*"([0-9a-f]{64})".*/\1/')"
+          test -n "$version" && test -n "$checksum"
+          archive="$RUNNER_TEMP/opencode-v2.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://opencode.ai/files/bin/$version/opencode-linux-x64-baseline.tar.gz" \
+            --output "$archive"
+          echo "$checksum  $archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" opencode
+          chmod +x "$RUNNER_TEMP/opencode"
+          echo "$RUNNER_TEMP" >>"$GITHUB_PATH"
+          echo "OPENCODE_BIN=$RUNNER_TEMP/opencode" >>"$GITHUB_ENV"
+          echo "OPENCODE_EXPECTED_VERSION=$version" >>"$GITHUB_ENV"
+      - name: Run real OpenCode v2 compatibility
         run: bash install/pi-router/test/opencode_smoke.sh

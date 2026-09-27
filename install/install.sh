@@ -361,6 +361,28 @@ require_cmd() {
   fi
 }
 
+# check_opencode_major_version rejects OpenCode versions whose config schema or
+# provider contract is incompatible with this installer. A missing executable
+# is handled by the target-specific warning below so the installer can still
+# prepare a config before OpenCode is installed.
+check_opencode_major_version() {
+  local version version_line major
+  if ! version="$(opencode --version 2>/dev/null)"; then
+    err "Unable to determine the installed opencode version; 'opencode --version' failed. OpenCode major version 2 is required."
+    return 1
+  fi
+  version_line="$(printf '%s\n' "$version" | sed -n '1p' | tr -d '\r')"
+  major="$(printf '%s\n' "$version_line" | sed -nE 's/^[^0-9]*([0-9]+)(\..*)?$/\1/p')"
+  if [ -z "$major" ]; then
+    err "Unable to determine the installed opencode major version from '${version_line:-unknown}'. OpenCode major version 2 is required."
+    return 1
+  fi
+  if [ "$major" != "2" ]; then
+    err "OpenCode major version 2 is required; detected ${version_line:-unknown}."
+    return 1
+  fi
+}
+
 # Refuse to write through a symlink. Project scope reads the install path from
 # the user's git repo; a malicious checkout could ship `.claude/settings.json`
 # (or `.claude/` itself) as a symlink to e.g. `~/.ssh/authorized_keys`, and
@@ -999,15 +1021,13 @@ EOF
 }
 
 # write_opencode_config merges the managed Weave provider into opencode's
-# opencode.json and registers the bundled routing hooks. Subscription
-# enrollment is handled by the router's login command, so opencode only needs
-# this provider and its router key:
+# opencode.json. Subscription enrollment is handled by the router's login
+# command, so opencode only needs this provider and its router key:
 #   - provider.weave        : OpenAI/Responses-shaped (@ai-sdk/openai → /v1/responses).
 #                             The single request provider. The router routes every
 #                             turn across the models the router can serve. The default.
-# Re-running rewrites the block in-place via jq and strips the legacy
-# `weave-codex` provider. The plugin is retained for lifecycle/classifier and
-# directive hooks, but has no login or subscription-header transport.
+# Re-running rewrites the block in-place via jq, strips legacy provider blocks
+# and removes the obsolete v1 plugin registration and files.
 #
 # Usage: write_opencode_config <config_file_path> <base_url> <api_key> [user_email] [user_name]
 write_opencode_config() {
@@ -1065,29 +1085,6 @@ write_opencode_config() {
     }
   ')"
 
-  # Drop the routing plugin next to the config and register its absolute path
-  # so it loads regardless of OpenCode scope. It contains lifecycle,
-  # classifier, and directive hooks; managed subscription enrollment lives in
-  # the router's login command and is never transported in request headers.
-  local plugin_dir plugin_spec plugin_src plugin_directives_src plugin_classifier_src plugin_arg=""
-  plugin_dir="$(cd "$(dirname "$config_file")" && pwd)/.weave"
-  plugin_spec="$plugin_dir/opencode-weave.ts"
-  plugin_src="$script_dir/opencode-weave/src/index.ts"
-  plugin_directives_src="$script_dir/opencode-weave/src/directives.ts"
-  plugin_classifier_src="$script_dir/opencode-weave/src/classifier-thread.ts"
-  if [ -f "$plugin_src" ] && [ -f "$plugin_directives_src" ] && [ -f "$plugin_classifier_src" ]; then
-    mkdir -p "$plugin_dir"
-    cp "$plugin_src" "$plugin_spec"
-    chmod 644 "$plugin_spec"
-    cp "$plugin_directives_src" "$plugin_dir/directives.ts"
-    chmod 644 "$plugin_dir/directives.ts"
-    cp "$plugin_classifier_src" "$plugin_dir/classifier-thread.ts"
-    chmod 644 "$plugin_dir/classifier-thread.ts"
-    plugin_arg="$plugin_spec"
-  else
-    warn "opencode routing plugin source not found at $plugin_src — skipping lifecycle and classifier hooks. (Use a packaged 'npx $npm_package_name' install.)"
-  fi
-
   # Installing must actually activate the router. Preserve a prior direct model
   # beside the config so off/uninstall can restore the user's exact choice.
   local parked_file previous_model
@@ -1112,23 +1109,27 @@ write_opencode_config() {
   # file (other providers, mcp, agent settings) untouched. The managed model is
   # always weave/auto; a prior direct choice was parked above for exact restore.
   #
-  # Legacy subscription providers are always stripped: the single Responses
-  # `weave` provider supersedes them. Register the routing plugin when its
-  # bundled source is available, while removing stale duplicate registrations.
+  # Legacy subscription providers and the v1 plugin are removed during the
+  # migration; unrelated providers and plugins remain untouched.
   local merged
   if [ -f "$config_file" ]; then
     merged="$(jq \
       --argjson block "$block" \
-      --arg plugin "$plugin_arg" \
       '
       .provider = ((.provider // {}) | .weave = $block)
       | (.provider |= del(."weave-codex"))
       | (.provider |= del(."weave-claude"))
-      | (if $plugin != ""
-           then .plugin = ((.plugin // []) | map(select((tostring | endswith("/opencode-weave.ts")) | not)) + [$plugin])
-           else (if (.plugin | type) == "array"
-                   then .plugin |= map(select((tostring | endswith("/opencode-weave.ts")) | not))
-                   else . end)
+      | (if (.providers | type) == "object"
+           then .providers |= del(.weave, ."weave-codex", ."weave-claude")
+           else .
+         end)
+      | (if (.providers | type) == "object" and (.providers | length) == 0
+           then del(.providers)
+           else .
+         end)
+      | (if (.plugin | type) == "array"
+           then .plugin |= map(select((tostring | test("(^|/)opencode-weave\\.ts$")) | not))
+           else .
          end)
       | (if (.plugin | type) == "array" and (.plugin | length) == 0 then del(.plugin) else . end)
       | .model = "weave/auto"
@@ -1137,17 +1138,25 @@ write_opencode_config() {
   else
     merged="$(jq -n \
       --argjson block "$block" \
-      --arg plugin "$plugin_arg" \
       '
       {
         "$schema": "https://opencode.ai/config.json",
         model: "weave/auto",
         provider: { weave: $block }
       }
-      | (if $plugin != "" then .plugin = [$plugin] else . end)
     ')"
   fi
   printf '%s\n' "$merged" >"$config_file"
+
+  local legacy_plugin_dir legacy_plugin_file
+  legacy_plugin_dir="$(dirname "$config_file")/.weave"
+  refuse_if_symlink "$legacy_plugin_dir"
+  for legacy_plugin_file in opencode-weave.ts directives.ts classifier-thread.ts; do
+    refuse_if_symlink "$legacy_plugin_dir/$legacy_plugin_file"
+    [ ! -f "$legacy_plugin_dir/$legacy_plugin_file" ] || rm -f "$legacy_plugin_dir/$legacy_plugin_file"
+  done
+  rmdir "$legacy_plugin_dir" 2>/dev/null || true
+
   # 0600: the file holds a router key. Even at user scope, mode 644 would
   # leak the key to any local user on a shared box.
   chmod 600 "$config_file"
@@ -1831,8 +1840,10 @@ case "$target" in
     ;;
   opencode)
     if ! command -v opencode >/dev/null 2>&1; then
-      warn "'opencode' not found on PATH. Install from https://opencode.ai (or 'npm install -g opencode-ai'), then re-run this script."
+      warn "'opencode' not found on PATH. Install OpenCode v2 from https://opencode.ai (Homebrew: 'brew install anomalyco/tap/opencode-v2'), then re-run this script."
       warn "Continuing — opencode.json will be written and will take effect once opencode is installed."
+    elif ! check_opencode_major_version; then
+      exit 1
     fi
     ;;
   pi)
@@ -5055,24 +5066,22 @@ if [ "$target" = "opencode" ]; then
 
   # Project scope: the per-teammate config carries the router key, so it
   # stays out of git. Same reasoning as the Codex path — base URL is shared,
-  # but the key is per-person. The .weave/ plugin dir is per-person too (the
-  # config references it by absolute path), so ignore it alongside.
+  # but the key is per-person, so ignore the config alongside.
   if [ "$scope" = "project" ] && [ -z "$install_dir" ] && [ -n "${git_root:-}" ]; then
     gitignore="$git_root/.gitignore"
     refuse_if_symlink "$gitignore"
     for entry in \
       "opencode.json" \
-      ".weave/" \
       ".weave-parked.json"
     do
       if [ ! -f "$gitignore" ] || ! grep -qxF "$entry" "$gitignore"; then
         printf '%s\n' "$entry" >>"$gitignore"
       fi
     done
-    ok "Updated $gitignore (ignored opencode.json, .weave/)"
+    ok "Updated $gitignore (ignored opencode.json)"
   fi
 
-  # Slash command wrappers: opencode discovers commands in *.md files under
+  # Native slash command files: opencode discovers commands in *.md files under
   # ~/.config/opencode/commands/ (user scope) and .opencode/commands/ (project
   # scope). Install command wrappers for /rf (±), /force-model, /unforce-model
   # so typing /rf + in the TUI expands to /router-feedback + and reaches the

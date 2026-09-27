@@ -30,23 +30,7 @@ type ClientIdentity struct {
 	// RolloutID is the x-weave-rollout-id eval/training-harness correlation
 	// id; joins a sandbox rollout's graded reward to its routing decisions.
 	RolloutID string
-	// OpenCodeAgent is a known OpenCode chat.headers agent, or empty.
-	// Metadata only: never used for auth, billing, or provider eligibility.
-	OpenCodeAgent OpenCodeAgent
 }
-
-// OpenCodeAgent is the typed OpenCode chat.headers agent vocabulary.
-type OpenCodeAgent string
-
-const (
-	OpenCodeAgentBuild      OpenCodeAgent = "build"
-	OpenCodeAgentTitle      OpenCodeAgent = "title"
-	OpenCodeAgentExplore    OpenCodeAgent = "explore"
-	OpenCodeAgentCompaction OpenCodeAgent = "compaction"
-)
-
-// OpenCodeAgentHeader is the production OpenCode lifecycle header.
-const OpenCodeAgentHeader = "X-Weave-OpenCode-Agent"
 
 // OpenCodeSessionHeader carries OpenCode's own session id (ses_...), which
 // OpenCode core sends on every provider request without a Weave plugin.
@@ -55,17 +39,6 @@ const OpenCodeSessionHeader = "X-OpenCode-Session"
 // OpenCodeParentSessionHeader names the parent session on OpenCode subagent
 // requests; a subagent runs in a child session with its own id.
 const OpenCodeParentSessionHeader = "X-Parent-Session-Id"
-
-// ParseOpenCodeAgent accepts only the known OpenCode agent values.
-func ParseOpenCodeAgent(raw string) OpenCodeAgent {
-	agent := OpenCodeAgent(strings.TrimSpace(raw))
-	switch agent {
-	case OpenCodeAgentBuild, OpenCodeAgentTitle, OpenCodeAgentExplore, OpenCodeAgentCompaction:
-		return agent
-	default:
-		return ""
-	}
-}
 
 // EvalClientAppPrefix is the X-App prefix an eval harness puts in front of
 // the client it imitates ("weave-eval-codex").

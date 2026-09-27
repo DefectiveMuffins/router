@@ -200,14 +200,16 @@ next Codex session back to its normal provider, or run
 `npx @weave-os/router disable-routing` in a shell; a literal
 `/disable-routing` is not a third-party extension point in Codex.
 
-**opencode.** `npx @weave-os/router --opencode` merges a `provider.weave`
-entry into `~/.config/opencode/opencode.json` (or `<repo>/opencode.json`
-with `--scope project`) and makes `weave/auto` the active model while saving
-any prior default for off/uninstall. OpenCode sends Responses requests through
-its bundled `@ai-sdk/openai` provider, while the router selects and translates
-to the upstream model. The router key and identity headers ride alongside the
-provider config; re-install rewrites only the managed provider and
-`--uninstall --opencode` removes it and restores the prior model.
+**opencode.** `npx @weave-os/router --opencode` requires OpenCode major version
+2 when the CLI is installed and available on `PATH`. It merges a
+`provider.weave` entry into `~/.config/opencode/opencode.json` (or
+`<repo>/opencode.json` with `--scope project`) and makes `weave/auto` the active
+model while saving any prior default for off/uninstall. OpenCode v2 sends
+Responses requests through its bundled `@ai-sdk/openai` provider; the router
+selects and translates to the upstream model. The router key, identity, and
+session headers ride alongside the provider config. No plugin is installed;
+re-install removes stale v1 plugin registrations/files, and
+`--uninstall --opencode` removes the provider and restores the prior model.
 
 **pi.** `npx @weave-os/router --pi` keeps stock pi as the runtime and installs
 the router's pi extension. It adds the Loom header, Wooly's animated terminal

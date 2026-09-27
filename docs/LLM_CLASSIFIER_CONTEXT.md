@@ -58,10 +58,9 @@ overrides are not supported for admitted threads.
 Title-generation, quota probes, short-form classification and compaction requests
 carrying a thread ticket return 409 before creating classifier facts or session
 pins; they cannot establish or replace the conversation root.
-An OpenCode client whose enrollment fails sends the reserved
+A client whose enrollment fails may send the reserved
 `weave-classifier-unavailable` header value. Middleware returns a non-retryable
-400 without dispatch; other invalid tickets still return 409. This is necessary
-because OpenCode catches plugin hook exceptions and retries 409 responses.
+400 without dispatch; other invalid tickets still return 409.
 
 Postgres `classifier_threads` and `classifier_predictions` store hashes,
 counters and classification facts, not prompts. A primary-database row lock
@@ -169,20 +168,6 @@ Changing router URL/provider, losing enrollment, or a failed pending handshake
 aborts the provider request instead of sending it unticketed. Turning the opt-in
 off affects only future enrollments. Admitted sessions disable Pi compaction,
 extension auto-compaction and legacy handoff/escalation.
-
-## OpenCode client admission
-
-Set `WEAVE_OPENCODE_LLM_CLASSIFIER=1` with the bundled plugin. A
-`session.created` event persists a distinct UUID for each parent and child;
-`chat.headers` then authenticates the handshake and sends the resulting ticket
-on every inference request. The auth-loader fetch hook is not a reliable place
-to inject tickets: the pinned CLI can bypass it while still running
-`chat.headers`. OpenCode also swallows a hook exception, so the header hook
-sets the reserved fail-closed marker before enrollment and replaces it only
-on success. Existing sessions without a creation record cannot enroll while
-opted in; reopen them with the opt-in unset or start a new session. Title
-requests remain unticketed, and compaction or a changed router origin blocks
-further classifier dispatch.
 
 ## Claude Code and Codex local proxy admission
 

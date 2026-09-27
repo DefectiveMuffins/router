@@ -5,7 +5,6 @@ package turntype
 import (
 	"strings"
 
-	"weave-os/router/internal/requestcontext"
 	"weave-os/router/internal/translate"
 )
 
@@ -55,9 +54,8 @@ const codexCompactionMarkerPhrase = "you are performing a context checkpoint com
 const recapMarkerPhrase = "the user stepped away and is coming back. recap in under"
 
 // openCodeTitlePromptPrefix opens the system prompt of OpenCode's built-in
-// title agent (identical in 1.x and 2.x). OpenCode 2.x does not load the
-// lifecycle plugin that sends X-Weave-OpenCode-Agent, so this is the only
-// signal there.
+// title agent. OpenCode 2.x identifies this request from its native prompt,
+// gated on the detected client rather than a plugin-provided header.
 const openCodeTitlePromptPrefix = "you are a title generator. you output only a thread title."
 
 // openCodeTitleMaxMessages bounds OpenCode's title window: the system prompt
@@ -91,7 +89,6 @@ type OpenCodeCaller struct {
 	// IsClient gates body fallbacks keyed on OpenCode's harness prompts, which
 	// another client could send verbatim.
 	IsClient bool
-	Agent    requestcontext.OpenCodeAgent
 }
 
 // DetectFromEnvelope classifies an inbound request. subAgentHint is the
@@ -103,7 +100,8 @@ func DetectFromEnvelope(env *translate.RequestEnvelope, feats translate.RoutingF
 	return Detect(env, feats, subAgentHint, OpenCodeCaller{})
 }
 
-// Detect classifies an inbound request. Unknown OpenCode agents fall through.
+// Detect classifies an inbound request. OpenCode-specific body matching is
+// enabled only for an identified OpenCode caller.
 func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, subAgentHint string, openCode OpenCodeCaller) TurnType {
 	if env == nil {
 		return MainLoop
@@ -112,8 +110,7 @@ func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, sub
 	if isProbe(feats) {
 		return Probe
 	}
-	if openCode.Agent == requestcontext.OpenCodeAgentTitle ||
-		isTitleGen(env, feats.HasTools) ||
+	if isTitleGen(env, feats.HasTools) ||
 		(feats.TitleGenHint && env.SourceFormat() == translate.FormatOpenAI) ||
 		(openCode.IsClient && isOpenCodeTitleGen(env, feats)) {
 		return TitleGen
@@ -124,8 +121,7 @@ func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, sub
 	// format, which Claude Code always speaks. Gating on format keeps
 	// Codex/OpenAI clients — whose prompts can incidentally mention
 	// "compact" — out of the hard pin.
-	if openCode.Agent == requestcontext.OpenCodeAgentCompaction ||
-		(env.SourceFormat() == translate.FormatAnthropic && isCompaction(systemText, lastUserText)) {
+	if env.SourceFormat() == translate.FormatAnthropic && isCompaction(systemText, lastUserText) {
 		return Compaction
 	}
 	if isCodexCompaction(lastUserText) {
@@ -134,8 +130,7 @@ func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, sub
 	if env.SourceFormat() == translate.FormatAnthropic && isRecap(lastUserText) {
 		return Recap
 	}
-	if openCode.Agent == requestcontext.OpenCodeAgentExplore ||
-		isSubAgentDispatch(env.MetadataUserID(), env.AnthropicBillingHeader(), env.FirstUserMessageText(), subAgentHint) {
+	if isSubAgentDispatch(env.MetadataUserID(), env.AnthropicBillingHeader(), env.FirstUserMessageText(), subAgentHint) {
 		return SubAgentDispatch
 	}
 	if isClassifier(feats) {

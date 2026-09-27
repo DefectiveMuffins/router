@@ -664,27 +664,30 @@ if [ "$target" = "opencode" ]; then
     opencode_direct_model="$(jq -r '.direct_model // empty' "$opencode_parked" 2>/dev/null || true)"
   fi
 
-  # Remove the legacy plugin left by older installers. New installs no longer
-  # create it, but uninstall should clean it up when present.
+  # Older installers registered a v1 plugin in opencode.json and copied its
+  # sources into .weave/. Remove those exact legacy registrations and assets.
   if [ -d "$opencode_dir" ]; then
-    opencode_plugin="$(cd "$opencode_dir" && pwd)/.weave/opencode-weave.ts"
+    opencode_plugin_dir="$(cd "$opencode_dir" && pwd)/.weave"
   else
-    opencode_plugin="$opencode_dir/.weave/opencode-weave.ts"
+    opencode_plugin_dir="$opencode_dir/.weave"
   fi
 
   report_opencode_uninstall_event "$opencode_config_file" || true
   if [ -f "$opencode_config_file" ]; then
     # Strip every managed provider (`weave`, `weave-claude`, and the legacy
-    # `weave-codex` from pre-upgrade installs), remove the stale legacy plugin
-    # entry, and restore the direct model parked during
+    # `weave-codex` from pre-upgrade installs), remove any stale legacy plugin
+    # registration, and restore the direct model parked during
     # install. Other providers, direct models selected while routing was off,
     # other plugins, and unrelated keys are preserved.
-    cleaned="$(jq --arg plugin "$opencode_plugin" --arg direct_model "$opencode_direct_model" '
+    cleaned="$(jq --arg direct_model "$opencode_direct_model" '
       (if .provider.weave then del(.provider.weave) else . end)
       | (if .provider["weave-claude"] then del(.provider["weave-claude"]) else . end)
       | (if .provider["weave-codex"] then del(.provider["weave-codex"]) else . end)
       | (if (.provider // {}) == {} then del(.provider) else . end)
-      | (if (.plugin | type) == "array" then .plugin -= [$plugin] else . end)
+      | (if (.plugin | type) == "array"
+           then .plugin |= map(select((tostring | test("(^|/)opencode-weave\\.ts$")) | not))
+           else .
+         end)
       | (if (.plugin | type) == "array" and (.plugin | length) == 0 then del(.plugin) else . end)
       | (if (.model // "" | tostring | (startswith("weave/") or startswith("weave-claude/") or startswith("weave-codex/")))
            then (if $direct_model != "" then .model = $direct_model else del(.model) end)
@@ -705,21 +708,18 @@ if [ "$target" = "opencode" ]; then
     info "No opencode config at $opencode_config_file (already uninstalled?)"
   fi
 
-  if [ -f "$opencode_plugin" ]; then
-    refuse_if_symlink "$opencode_plugin"
-    rm -f "$opencode_plugin"
-    opencode_directives="$(dirname "$opencode_plugin")/directives.ts"
-    if [ -f "$opencode_directives" ]; then
-      refuse_if_symlink "$opencode_directives"
-      rm -f "$opencode_directives"
+  refuse_if_symlink "$opencode_plugin_dir"
+  legacy_opencode_assets_removed=false
+  for opencode_asset in opencode-weave.ts directives.ts classifier-thread.ts; do
+    refuse_if_symlink "$opencode_plugin_dir/$opencode_asset"
+    if [ -f "$opencode_plugin_dir/$opencode_asset" ]; then
+      rm -f "$opencode_plugin_dir/$opencode_asset"
+      legacy_opencode_assets_removed=true
     fi
-    opencode_classifier="$(dirname "$opencode_plugin")/classifier-thread.ts"
-    if [ -f "$opencode_classifier" ]; then
-      refuse_if_symlink "$opencode_classifier"
-      rm -f "$opencode_classifier"
-    fi
-    rmdir "$opencode_dir/.weave" 2>/dev/null || true
-    ok "Removed legacy opencode plugin"
+  done
+  rmdir "$opencode_plugin_dir" 2>/dev/null || true
+  if [ "$legacy_opencode_assets_removed" = "true" ]; then
+    ok "Removed legacy opencode plugin files"
   fi
 
   # Drop the toggle parked sidecar after its prior model has been restored.

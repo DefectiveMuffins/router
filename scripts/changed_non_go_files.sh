@@ -18,7 +18,7 @@ shell_files="$output_dir/shell-files.nul"
 python_files="$output_dir/python-files.nul"
 : >"$shell_files"
 : >"$python_files"
-for marker in typescript-frontend typescript-opencode typescript-pi; do
+for marker in typescript-frontend typescript-pi; do
 	[[ ! -e "$output_dir/$marker" ]] || rm "$output_dir/$marker"
 done
 ruff_config_changed=false
@@ -31,9 +31,6 @@ while IFS= read -r -d '' file; do
 	if [[ "$file" =~ ^(frontend|assets/ui/types)/.+\.tsx?$ ]] ||
 		[[ "$file" == frontend/package.json || "$file" == frontend/package-lock.json || "$file" == frontend/tsconfig*.json ]]; then
 		touch "$output_dir/typescript-frontend"
-	elif [[ "$file" =~ ^install/opencode-weave/.+\.tsx?$ ]] ||
-		[[ "$file" == install/opencode-weave/package.json || "$file" == install/opencode-weave/package-lock.json || "$file" == install/opencode-weave/tsconfig*.json ]]; then
-		touch "$output_dir/typescript-opencode"
 	elif [[ "$file" =~ ^install/pi-router/.+\.tsx?$ ]] ||
 		[[ "$file" == install/pi-router/package.json || "$file" == install/pi-router/package-lock.json || "$file" == install/pi-router/tsconfig*.json ]]; then
 		touch "$output_dir/typescript-pi"

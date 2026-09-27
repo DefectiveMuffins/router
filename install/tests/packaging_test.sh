@@ -41,7 +41,7 @@ root="$pkg/package"
 
 # The registry itself must ship: install.sh sources it at runtime, so a tarball
 # without it is an installer that cannot resolve a single directive.
-for asset in registry.sh directives.tsv install.sh uninstall.sh cc-statusline.sh codex-status.sh bin.js opencode-weave/src/index.ts opencode-weave/src/directives.ts opencode-weave/src/classifier-thread.ts; do
+for asset in registry.sh directives.tsv install.sh uninstall.sh cc-statusline.sh codex-status.sh bin.js; do
   if [ -f "$root/$asset" ]; then ok "the tarball ships $asset"; else no "the tarball ships $asset" "present" "missing"; fi
 done
 
@@ -129,10 +129,14 @@ installed="$(cd "$home/.codex/skills" 2>/dev/null && ls -d */ 2>/dev/null | tr -
 check "the packed entrypoint installs every Codex skill" \
   "disable-routing fm force-model rf router-feedback router-models router-off router-on router-session router-status ufm unforce-model" "$installed"
 
+mkdir -p "$work/packed-opencode/.weave"
+printf '%s\n' 'export default legacyPlugin' >"$work/packed-opencode/.weave/opencode-weave.ts"
 HOME="$home" PATH="$home/bin:$PATH" WEAVE_ROUTER_KEY="rk_test_key" NO_COLOR=1 \
   node "$root/bin.js" --opencode --dir "$work/packed-opencode" --quiet --base-url http://127.0.0.1:9 >/dev/null 2>&1 || true
-check "the packed entrypoint installs the OpenCode routing plugin" "yes" \
-  "$([ -f "$work/packed-opencode/.weave/opencode-weave.ts" ] && echo yes || echo no)"
+check "the packed entrypoint removes the old OpenCode plugin" "no" \
+  "$([ -e "$work/packed-opencode/.weave/opencode-weave.ts" ] && echo yes || echo no)"
+check "the packed entrypoint installs OpenCode without registering a plugin" "false" \
+  "$(jq -r 'has("plugin")' "$work/packed-opencode/opencode.json" 2>/dev/null || echo false)"
 check "the packed entrypoint activates weave/auto" "weave/auto" \
   "$(jq -r '.model // empty' "$work/packed-opencode/opencode.json" 2>/dev/null || true)"
 
@@ -172,8 +176,8 @@ check "the packed entrypoint removes its pi package" "" \
 
 HOME="$home" PATH="$home/bin:$PATH" NO_COLOR=1 \
   node "$root/bin.js" --uninstall --opencode --dir "$work/packed-opencode" >/dev/null 2>&1 || true
-check "the packed entrypoint uninstalls the OpenCode plugin" "no" \
-  "$([ -e "$work/packed-opencode/.weave/opencode-weave.ts" ] && echo yes || echo no)"
+check "the packed entrypoint leaves no OpenCode plugin directory" "no" \
+  "$([ -e "$work/packed-opencode/.weave" ] && echo yes || echo no)"
 
 # The legacy package is published from the same tarball with only its package
 # name changed. Its entrypoint must identify that name and explain the

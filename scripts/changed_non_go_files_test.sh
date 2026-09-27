@@ -12,7 +12,7 @@ git -C "$repo" init --quiet
 git -C "$repo" config user.name "Changed File Test"
 git -C "$repo" config user.email "changed-files@example.test"
 
-mkdir -p "$repo/frontend/src/app" "$repo/install/opencode-weave/src" "$repo/install/pi-router/src" "$repo/sidecars/hmm"
+mkdir -p "$repo/frontend/src/app" "$repo/install/pi-router/src" "$repo/sidecars/hmm"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$repo/deleted.sh"
 printf 'print("old")\n' >"$repo/old.py"
 printf 'export const old = true\n' >"$repo/frontend/old.ts"
@@ -24,7 +24,6 @@ printf '#!/usr/bin/env bash\nexit 0\n' >"$repo/odd name.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$repo/run-check"
 printf 'print("new")\n' >"$repo/sidecars/hmm/new check.py"
 printf 'export const next = true\n' >"$repo/frontend/src/app/next.tsx"
-printf 'export const plugin = true\n' >"$repo/install/opencode-weave/src/index.ts"
 printf 'export const extension = true\n' >"$repo/install/pi-router/src/index.ts"
 git -C "$repo" mv old.py "renamed file.py"
 git -C "$repo" rm --quiet deleted.sh
@@ -56,7 +55,6 @@ for file in "${python_files[@]}"; do
 done
 [[ ! " ${shell_files[*]} " =~ deleted\.sh ]]
 [[ -f "$output/typescript-frontend" ]]
-[[ -f "$output/typescript-opencode" ]]
 [[ -f "$output/typescript-pi" ]]
 
 echo "changed non-Go file discovery tests passed"

@@ -129,13 +129,13 @@ Four install targets:
 - **opencode** (`--opencode`) — merges a Responses-format `provider.weave`
   entry backed by `@ai-sdk/openai` into
   `~/.config/opencode/opencode.json` (or `<repo>/opencode.json` with
-  `--scope project`). Installation activates `weave/auto` and parks any prior
-  default model so `off` and uninstall can restore it exactly. The bundled
-  plugin supplies OpenCode lifecycle, classifier, and directive hooks; managed
-  subscription enrollment is handled by `npx @weave-os/router login claude`
-  or `login codex`, not request headers. Re-install rewrites only the managed
-  provider and plugin entry; unrelated providers, MCP servers, agents, and
-  plugins stay untouched.
+  `--scope project`). OpenCode major version 2 is required when the CLI is
+  installed and available on `PATH`. Installation activates `weave/auto` and
+  parks any prior default model so `off` and uninstall can restore it exactly.
+  The installer uses OpenCode's native Responses provider and session headers;
+  no plugin is installed. Re-install rewrites only the managed provider and
+  removes any stale v1 plugin registration/files while preserving unrelated
+  providers, MCP servers, agents, and plugins.
 - **pi** (`--pi`) — registers the `weave` provider and installs this package as
   a pi extension. Stock pi then gets the Loom startup header, Wooly's animated
   mascot, the persistent actual-route display, cumulative session savings,

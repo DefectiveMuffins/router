@@ -326,7 +326,11 @@ class Handler(BaseHTTPRequestHandler):
                 "method": "POST", "path": path, "rejected": False,
                 "app": self.headers.get("x-app"), "model": body.get("model"),
                 "stream": bool(body.get("stream")), "served": scenario.value,
-                "agent": agent, "weave_agent": weave_agent, "session_id": self.headers.get("session-id"),
+                "agent": agent, "weave_agent": weave_agent,
+                "session_id": self.headers.get("session-id") or self.headers.get("x-session-id") or self.headers.get("x-opencode-session"),
+                "instructions": body.get("instructions", ""),
+                "body_keys": list(body), "header_names": [name.lower() for name in self.headers],
+                "user_agent": self.headers.get("user-agent", ""),
                 "codex_agent_id": self.headers.get("x-codex-agent-id"),
                 "codex_parent_agent_id": self.headers.get("x-codex-parent-agent-id"),
                 "codex_header_names": [key for key in self.headers if "codex" in key.lower() or "session" in key.lower()],
@@ -337,7 +341,8 @@ class Handler(BaseHTTPRequestHandler):
                 "key_present": bool(key), "key_suffix": key[-4:],
                 "input": inputs, "tool_outputs": tool_outputs,
             })
-            session_id = self.headers.get("session-id", "")
+            session_id = (self.headers.get("session-id") or self.headers.get("x-session-id")
+                          or self.headers.get("x-opencode-session") or "")
             with _log_lock:
                 request_count = _responses_requests.get(session_id, 0) + 1
                 _responses_requests[session_id] = request_count
