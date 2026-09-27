@@ -246,9 +246,9 @@ func TestRecordTurnUsage_PassthroughDoesNotReadOrWritePins(t *testing.T) {
 	var sessionKey [sessionpin.SessionKeyLen]byte
 	sessionKey[0] = 1
 	svc.recordTurnUsage(context.Background(), turnLoopResult{
-		Decision:                   router.Decision{Provider: providers.ProviderAnthropic, Model: "claude-sonnet-4-6"},
-		SessionKey:                 sessionKey,
-		PinRole:                    sessionpin.DefaultRole,
+		Decision:               router.Decision{Provider: providers.ProviderAnthropic, Model: "claude-sonnet-4-6"},
+		SessionKey:             sessionKey,
+		PinRole:                sessionpin.DefaultRole,
 		CallerModelPassthrough: true,
 	}, providers.ProviderAnthropic, "claude-sonnet-4-6", 1200, 80, 200, 900, false)
 

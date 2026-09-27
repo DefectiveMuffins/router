@@ -90,6 +90,7 @@ func withAPIKey(svc *auth.Service, byokRequiresOptIn bool) gin.HandlerFunc {
 		if err != nil {
 			observability.FromContext(ctx).Error("Failed to load installation routing policy", "installation_id", installation.ID, "err", err)
 			finishAuthSpan(authSpan, err)
+			c.Header("Retry-After", "1")
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "routing_policy_unavailable"})
 			return
 		}
