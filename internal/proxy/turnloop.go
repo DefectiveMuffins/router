@@ -1221,16 +1221,31 @@ func (s *Service) runTurnLoop(
 	// guaranteeing a 401; (3) image capability — a text-only forced model falls
 	// through rather than guaranteeing an upstream 400 on a screenshot turn.
 	//
+	// A session that outgrew the forced model's window is not dropped: the
+	// client gets its native prompt-too-long error, compacts, and the next turn
+	// fits the model the user asked for. Rerouting instead would leave a
+	// client that believes it has room never compacting.
+	//
 	// forcedTierFloor preserves the user's tier intent when the forced pin gets
-	// dropped below (usually the session outgrew the model's context window):
-	// the scorer call further down constrains the fresh decision to this tier
-	// instead of collapsing to the cheap tier-default. TierUnknown = no constraint.
+	// dropped below for any other reason: the scorer call further down
+	// constrains the fresh decision to this tier instead of collapsing to the
+	// cheap tier-default. TierUnknown = no constraint.
 	forcedTierFloor := catalog.TierUnknown
 	if forceModelFound {
 		_, excluded := req.ExcludedModels[forceModelPin.Model]
 		_, providerEnabled := req.EnabledProviders[forceModelPin.Provider]
 		providerEligible := req.EnabledProviders == nil || providerEnabled
 		imageCapable := pinServesImages(forceModelPin, req)
+		if excluded && providerEligible && imageCapable && env != nil && forcedModelOverflowsWindow(env, feats, forceModelPin) {
+			log.Info("Forced session pin exceeds its model's context window; returning overflow for the client to compact",
+				"pin_model", forceModelPin.Model,
+				"pin_provider", forceModelPin.Provider,
+				"overflow_token_estimate", env.ContextOverflowTokenEstimate(),
+				"max_tokens", feats.MaxTokens,
+				"role", res.PinRole,
+			)
+			return res, fmt.Errorf("forced model %s: %w", forceModelPin.Model, ErrContextWindowExceeded)
+		}
 		if !excluded && providerEligible && imageCapable {
 			res.PinModel = forceModelPin.Model
 			res.PinAgeSec = pinAge(forceModelPin)

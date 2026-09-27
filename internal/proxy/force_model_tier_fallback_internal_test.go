@@ -2,8 +2,10 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,6 +181,86 @@ func TestRunTurnLoop_ForcedModelContextOverflow_StaysInTier(t *testing.T) {
 	assert.True(t, haikuExcluded, "tier constraint must exclude the low-tier model from the scorer pool")
 	_, opusExcluded := fr.captured[0].ExcludedModels["claude-opus-5"]
 	assert.False(t, opusExcluded, "the same-tier replacement must remain eligible")
+}
+
+// overflowingAnthropicBody returns a Messages body whose ÷4 token estimate
+// exceeds a 200k window, with an optional system prompt.
+func overflowingAnthropicBody(t *testing.T, system string) *translate.RequestEnvelope {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"model":      "claude-sonnet-4-5",
+		"max_tokens": 32_000,
+		"system":     system,
+		"messages":   []map[string]any{{"role": "user", "content": strings.Repeat("a ", 500_000)}},
+	})
+	require.NoError(t, err)
+	env, err := translate.ParseAnthropic(body)
+	require.NoError(t, err)
+	return env
+}
+
+// A session that outgrew the forced model's window returns the native
+// overflow error so the client compacts, instead of silently serving a
+// wider model the user did not pick.
+func TestRunTurnLoop_ForcedModelContextOverflow_ReturnsOverflowForClientCompaction(t *testing.T) {
+	const forced = "claude-sonnet-4-5"
+	fr := &tierProbeRouter{available: map[string]struct{}{
+		forced:          {},
+		"claude-opus-5": {},
+	}}
+	store := &forcedPinStore{pin: sessionpin.Pin{
+		Provider:    providers.ProviderAnthropic,
+		Model:       forced,
+		Reason:      translate.ReasonUserForceModel,
+		PinnedUntil: time.Now().Add(time.Hour),
+	}}
+	svc := NewService(fr, nil, nil, false, nil, store, false,
+		providers.ProviderAnthropic, "claude-haiku-4-5", nil).
+		WithAvailableModels(fr.available).
+		WithPlannerEnabled(false)
+
+	env := overflowingAnthropicBody(t, "")
+	feats := env.RoutingFeatures(false)
+	require.True(t, forcedModelOverflowsWindow(env, feats, store.pin), "test premise: body overflows the forced model's window")
+
+	_, err := svc.runTurnLoop(context.Background(), env, feats, "key-1", uuid.New(), "", nil, router.Request{
+		RequestedModel: feats.Model,
+		ExcludedModels: map[string]struct{}{forced: {}},
+	})
+	require.ErrorIs(t, err, ErrContextWindowExceeded)
+
+	cls, ok := ClassifyDispatchError(err)
+	require.True(t, ok)
+	assert.Equal(t, DispatchErrorContextWindowExceeded, cls.Kind)
+	assert.Equal(t, http.StatusBadRequest, cls.Status)
+	assert.Contains(t, cls.Message, "prompt is too long", "Claude Code keys its reactive compaction off this phrase")
+	assert.Empty(t, fr.captured, "an overflowing forced pin must not be rerouted through the scorer")
+}
+
+// The client's own compaction turn must still be served when the forced pin
+// overflows; failing it would leave the client unable to compact at all.
+func TestRunTurnLoop_ForcedModelContextOverflow_CompactionTurnStillServed(t *testing.T) {
+	const forced = "claude-sonnet-4-5"
+	store := &forcedPinStore{pin: sessionpin.Pin{
+		Provider:    providers.ProviderAnthropic,
+		Model:       forced,
+		Reason:      translate.ReasonUserForceModel,
+		PinnedUntil: time.Now().Add(time.Hour),
+	}}
+	fr := &tierProbeRouter{available: map[string]struct{}{"claude-haiku-4-5": {}}}
+	svc := NewService(fr, nil, nil, false, nil, store, false,
+		providers.ProviderAnthropic, "claude-haiku-4-5", nil)
+
+	env := overflowingAnthropicBody(t, "Your task is to create a detailed summary of the conversation so far.")
+	feats := env.RoutingFeatures(false)
+
+	res, err := svc.runTurnLoop(context.Background(), env, feats, "key-1", uuid.New(), "", nil, router.Request{
+		RequestedModel: feats.Model,
+		ExcludedModels: map[string]struct{}{forced: {}},
+	})
+	require.NoError(t, err)
+	assert.True(t, res.HardPinned, "the compaction turn routes through its hard pin")
+	assert.NotEqual(t, forced, res.Decision.Model)
 }
 
 func TestRunTurnLoop_ForcedModelOverridesHardPin(t *testing.T) {

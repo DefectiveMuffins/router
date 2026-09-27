@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"weave-os/router/internal/providers"
+	"weave-os/router/internal/router/sessionpin"
+	"weave-os/router/internal/translate"
 )
 
 // contextOverflowMessage leads with Anthropic's own wording: Claude Code keys
@@ -46,6 +48,21 @@ func isUpstreamContextOverflow(err error) bool {
 	}
 	// Gemini: "The input token count (N) exceeds the maximum number of tokens allowed (M)."
 	return strings.Contains(body, "input token count") && strings.Contains(body, "exceeds the maximum")
+}
+
+// forcedModelOverflowsWindow reports whether the request plus its reply
+// reserve exceeds the forced model's context window, under the same estimate
+// the context-window pre-filter uses.
+func forcedModelOverflowsWindow(env *translate.RequestEnvelope, feats translate.RoutingFeatures, pin sessionpin.Pin) bool {
+	outputReserve := contextWindowOutputReserve
+	if feats.MaxTokens > outputReserve {
+		outputReserve = feats.MaxTokens
+	}
+	estimate := env.ContextOverflowTokenEstimate()
+	if modelStripsAnthropicSignatures(pin.Model) {
+		estimate -= env.SignatureTokenSavings()
+	}
+	return estimate+outputReserve > contextWindowForRequest(pin.Model, pin.Provider)
 }
 
 // isContextOverflow reports whether err means the request cannot fit any
