@@ -72,11 +72,12 @@ type assignmentCacheEntry struct {
 // RoutingPolicyCache is bounded by installation invalidations and a short TTL.
 // The revision in the assignment key prevents an old user decision from crossing a policy update.
 type RoutingPolicyCache struct {
-	mu          sync.Mutex
-	policies    *expirable.LRU[string, policyCacheEntry]
-	assignments *expirable.LRU[string, assignmentCacheEntry]
-	generations map[string]uint64
-	ttl         time.Duration
+	mu             sync.Mutex
+	policies       *expirable.LRU[string, policyCacheEntry]
+	assignments    *expirable.LRU[string, assignmentCacheEntry]
+	generations    *expirable.LRU[string, uint64]
+	nextGeneration uint64
+	ttl            time.Duration
 }
 
 // NewRoutingPolicyCache constructs the installation-scoped cache.
@@ -84,27 +85,35 @@ func NewRoutingPolicyCache(ttl time.Duration) *RoutingPolicyCache {
 	return &RoutingPolicyCache{
 		policies:    expirable.NewLRU[string, policyCacheEntry](10000, nil, ttl),
 		assignments: expirable.NewLRU[string, assignmentCacheEntry](50000, nil, ttl),
-		generations: make(map[string]uint64), ttl: ttl,
+		generations: expirable.NewLRU[string, uint64](10000, nil, ttl), ttl: ttl,
 	}
+}
+
+func (cache *RoutingPolicyCache) currentGeneration(installationID string) uint64 {
+	if generation, found := cache.generations.Get(installationID); found {
+		return generation
+	}
+	// An evicted installation gets the latest epoch, never an old in-flight epoch.
+	return cache.nextGeneration
 }
 
 func (cache *RoutingPolicyCache) generation(installationID string) uint64 {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	return cache.generations[installationID]
+	return cache.currentGeneration(installationID)
 }
 
 func (cache *RoutingPolicyCache) policy(installationID string, generation uint64) (RoutingPolicy, bool) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	entry, found := cache.policies.Get(installationID)
-	return entry.policy, found && entry.generation == generation && cache.generations[installationID] == generation && time.Now().Before(entry.expiresAt)
+	return entry.policy, found && entry.generation == generation && cache.currentGeneration(installationID) == generation && time.Now().Before(entry.expiresAt)
 }
 
 func (cache *RoutingPolicyCache) setPolicy(installationID string, generation uint64, policy RoutingPolicy) bool {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if cache.generations[installationID] != generation {
+	if cache.currentGeneration(installationID) != generation {
 		return false
 	}
 	cache.policies.Add(installationID, policyCacheEntry{policy: policy, generation: generation, expiresAt: time.Now().Add(cache.ttl)})
@@ -119,13 +128,13 @@ func (cache *RoutingPolicyCache) assignment(installationID, routerUserID string,
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	entry, found := cache.assignments.Get(assignmentKey(installationID, routerUserID, revision))
-	return entry.routerOn, found && entry.generation == generation && cache.generations[installationID] == generation && time.Now().Before(entry.expiresAt)
+	return entry.routerOn, found && entry.generation == generation && cache.currentGeneration(installationID) == generation && time.Now().Before(entry.expiresAt)
 }
 
 func (cache *RoutingPolicyCache) setAssignment(installationID, routerUserID string, revision int64, generation uint64, routerOn bool) bool {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if cache.generations[installationID] != generation {
+	if cache.currentGeneration(installationID) != generation {
 		return false
 	}
 	cache.assignments.Add(assignmentKey(installationID, routerUserID, revision), assignmentCacheEntry{routerOn: routerOn, generation: generation, expiresAt: time.Now().Add(cache.ttl)})
@@ -136,6 +145,7 @@ func (cache *RoutingPolicyCache) setAssignment(installationID, routerUserID stri
 func (cache *RoutingPolicyCache) InvalidateInstallation(installationID string) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	cache.generations[installationID]++
+	cache.nextGeneration++
+	cache.generations.Add(installationID, cache.nextGeneration)
 	cache.policies.Remove(installationID)
 }

@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -110,6 +111,24 @@ func TestRoutingAssignmentRefreshesPolicyWhenInvalidatedAfterAdmission(t *testin
 	assert.True(t, auth.RoutingPassthroughFrom(ctx))
 	assert.Equal(t, 2, fixture.policyReads)
 	assert.Equal(t, 1, fixture.userReads, "the revoked revision must never be queried")
+}
+
+func TestRoutingPolicyInvalidationStillRejectsStaleReadAfterGenerationEviction(t *testing.T) {
+	cache := auth.NewRoutingPolicyCache(time.Minute)
+	fixture := &routingPolicyFixture{policy: auth.RoutingPolicy{Mode: auth.RoutingPolicyAssigned, Revision: 1}}
+	service := auth.NewService(nil, nil, nil, nil, auth.NoOpAPIKeyCache{}, nil, time.Now).WithRoutingPolicies(fixture, cache)
+	fixture.beforePolicyReturn = func() {
+		fixture.beforePolicyReturn = nil
+		fixture.policy = auth.RoutingPolicy{Mode: auth.RoutingPolicyPassthrough, Revision: 2}
+		cache.InvalidateInstallation("installation")
+		for installationNumber := 0; installationNumber <= 10000; installationNumber++ {
+			cache.InvalidateInstallation(strconv.Itoa(installationNumber))
+		}
+	}
+	ctx, err := service.WithRoutingPolicy(context.Background(), "installation")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), auth.RoutingPolicyFrom(ctx).Revision)
+	assert.Equal(t, 2, fixture.policyReads)
 }
 
 func TestRoutingPolicyLookupErrorsAndInvalidation(t *testing.T) {
