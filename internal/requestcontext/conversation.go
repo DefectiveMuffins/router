@@ -42,6 +42,23 @@ func SessionIDFromHeaders(headers http.Header) string {
 	return ""
 }
 
+// OpenCodeSessionIDFromHeaders reads OpenCode's native session headers; callers
+// consult it only once the client is known to be OpenCode. A subagent resolves
+// to its parent session, as Claude Code and Codex subagents share their
+// parent's session id; the first user message still separates the subagent's
+// pin. OpenCode names only the immediate parent, so a nested subagent resolves
+// to its spawning subagent.
+func OpenCodeSessionIDFromHeaders(headers http.Header) string {
+	session := NormalizeClientIdentifier(headers.Get(OpenCodeSessionHeader))
+	if session == "" {
+		return ""
+	}
+	if parent := NormalizeClientIdentifier(headers.Get(OpenCodeParentSessionHeader)); parent != "" {
+		return parent
+	}
+	return session
+}
+
 // ClaudeCodeMetadata is caller-asserted attribution, never authenticated account ownership.
 type ClaudeCodeMetadata struct {
 	DeviceID  string `json:"device_id"`

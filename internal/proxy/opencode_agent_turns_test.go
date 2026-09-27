@@ -127,6 +127,52 @@ func TestService_OpenCodeAgent_ExploreDoesNotOverwriteParentPin(t *testing.T) {
 	}
 }
 
+// Without the Weave plugin, OpenCode's own headers identify a subagent as a
+// child session naming its parent. It shares the parent's session id, as
+// Claude Code and Codex subagents do, but its distinct task prompt keeps its
+// pin off the parent conversation's.
+func TestService_OpenCodeNativeSubagentSharesSessionIDButNotPin(t *testing.T) {
+	const childBody = `{
+	"model":"auto",
+	"stream":false,
+	"tools":[{"type":"function","name":"bash","parameters":{"type":"object"}}],
+	"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Reply with the single word pong"}]}]
+}`
+	store := newFakePinStore()
+	fr := &fakeRouter{decision: router.Decision{Provider: providers.ProviderOpenAI, Model: "gpt-4o", Reason: "cluster"}}
+	svc := newOpenCodeTurnSvc(fr, store)
+	apiKeyID := uuid.New().String()
+
+	send := func(body string, headers map[string]string) proxy.ClientIdentity {
+		httpReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(""))
+		httpReq.Header.Set("X-App", proxy.ClientAppOpencode)
+		for name, value := range headers {
+			httpReq.Header.Set(name, value)
+		}
+		identity := proxy.ClientIdentityFromHeaders(httpReq.Header)
+		ctx := context.WithValue(authedCtx(apiKeyID), proxy.ClientIdentityContextKey{}, identity)
+		require.NoError(t, svc.ProxyOpenAIResponses(ctx, []byte(body), httptest.NewRecorder(), httpReq))
+		return identity
+	}
+
+	parent := send(openCodeResponsesBody, map[string]string{requestcontext.OpenCodeSessionHeader: openCodeParentSession})
+	require.NotEmpty(t, store.upserts)
+	parentKey := store.upserts[0].SessionKey
+	parentUpserts := len(store.upserts)
+
+	child := send(childBody, map[string]string{
+		requestcontext.OpenCodeSessionHeader:       "ses_opencode_child",
+		requestcontext.OpenCodeParentSessionHeader: openCodeParentSession,
+	})
+
+	assert.Equal(t, openCodeParentSession, parent.SessionID)
+	assert.Equal(t, openCodeParentSession, child.SessionID, "a subagent reports its parent's session id")
+	require.Greater(t, len(store.upserts), parentUpserts, "the subagent anchors its own pin")
+	for _, upsert := range store.upserts[parentUpserts:] {
+		assert.NotEqual(t, parentKey, upsert.SessionKey, "subagent turns must not overwrite the parent conversation's pin")
+	}
+}
+
 func TestService_OpenCodeAgent_BuildAndUnknownRouteAsMainLoop(t *testing.T) {
 	for _, agent := range []string{string(requestcontext.OpenCodeAgentBuild), "reviewer", ""} {
 		t.Run("agent="+agent, func(t *testing.T) {

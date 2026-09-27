@@ -44,6 +44,34 @@ func TestCanonicalConversationIdentityGolden(t *testing.T) {
 	}
 }
 
+func TestCanonicalConversationIDIgnoresOpenCodeHeaders(t *testing.T) {
+	headers := make(http.Header)
+	headers.Set(requestcontext.OpenCodeSessionHeader, "ses_opencode")
+	assert.Empty(t, requestcontext.CanonicalConversationID(headers, []byte(`{}`), requestcontext.ConversationResponses))
+}
+
+func TestOpenCodeSessionIDFromHeaders(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		headers map[string]string
+		want    string
+	}{
+		{"own session", map[string]string{"X-OpenCode-Session": "ses_opencode"}, "ses_opencode"},
+		{"subagent uses parent session", map[string]string{"X-OpenCode-Session": "ses_child", "X-Parent-Session-Id": "ses_parent"}, "ses_parent"},
+		{"parent session alone is ignored", map[string]string{"X-Parent-Session-Id": "ses_parent"}, ""},
+		{"oversized parent falls back to own session", map[string]string{"X-OpenCode-Session": "ses_child", "X-Parent-Session-Id": strings.Repeat("a", 129)}, "ses_child"},
+		{"oversized session", map[string]string{"X-OpenCode-Session": strings.Repeat("a", 129)}, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			headers := make(http.Header)
+			for name, value := range test.headers {
+				headers.Set(name, value)
+			}
+			assert.Equal(t, test.want, requestcontext.OpenCodeSessionIDFromHeaders(headers))
+		})
+	}
+}
+
 func TestConversationIdentitySurvivesCompactionAndSubagents(t *testing.T) {
 	headers := make(http.Header)
 	headers.Set("Session-Id", "conversation")

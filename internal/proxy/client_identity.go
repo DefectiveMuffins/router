@@ -40,6 +40,9 @@ func ClientIdentityFromHeaders(h http.Header) ClientIdentity {
 	}
 	if id.ClientApp == ClientAppOpencode {
 		id.OpenCodeAgent = requestcontext.ParseOpenCodeAgent(h.Get(requestcontext.OpenCodeAgentHeader))
+		if id.SessionID == "" {
+			id.SessionID = requestcontext.OpenCodeSessionIDFromHeaders(h)
+		}
 	}
 	return id
 }
