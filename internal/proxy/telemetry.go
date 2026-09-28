@@ -285,6 +285,20 @@ type InsertTelemetryParams struct {
 	EffortSelected string
 	EffortSent     string
 	EffortSource   string
+
+	// UserPrompt reports whether the trailing input is text a person typed.
+	// Nil on paths that do not assess it, leaving the column NULL.
+	UserPrompt *bool
+	// UserPromptGapMs and UserPromptGapPriorModel are filled by fireTelemetry
+	// from the session turn clock, never by the call site.
+	UserPromptGapMs         *int64
+	UserPromptGapPriorModel string
+	// ErrorClass is empty on a normal completion.
+	ErrorClass TurnErrorClass
+	// LatestToolCallCounts is pre-marshaled JSON {tool name: {calls, errors}}
+	// over only the tool results this request delivered. nil when it delivered
+	// none.
+	LatestToolCallCounts []byte
 }
 
 // applyClientGitContextTelemetry stamps the ClientGit* group when the
@@ -618,6 +632,7 @@ func (s *Service) recordPolicyPinRouteFailure(ctx context.Context, requestID str
 		RequestedModel: requestedModel,
 		TurnType:       string(turnType),
 		DecisionReason: DecisionReasonPolicyPinUnservable,
+		ErrorClass:     TurnErrorRoutingRefused,
 		Strategy:       string(router.StrategyFromContext(ctx)),
 		RouterUserID:   auth.UserIDFrom(ctx),
 	}

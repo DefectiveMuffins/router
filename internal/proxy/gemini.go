@@ -464,6 +464,7 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 			FreshCandidateScores:   geminiObs.FreshCandidateScores,
 			PinAgeSec:              int64PtrIf(stickyHit && pinAgeSec > 0, pinAgeSec),
 			ToolResultBytes:        toolResultBytesPtr(inboundLastUser, tt),
+			ErrorClass:             classifyTurnError(proxyErr, "", 0),
 			CredentialKeyPrefix:    credentialKeyPrefix,
 			CredentialKeySuffix:    credentialKeySuffix,
 			CredentialSource:       credentialSource,

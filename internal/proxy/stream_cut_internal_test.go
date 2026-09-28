@@ -50,6 +50,38 @@ func TestClassifyStreamFailure(t *testing.T) {
 	}
 }
 
+func TestClassifyTurnError(t *testing.T) {
+	cases := []struct {
+		name            string
+		err             error
+		stopReason      string
+		invalidToolArgs int
+		want            TurnErrorClass
+	}{
+		{name: "normal completion", stopReason: "end_turn", want: ""},
+		{name: "rate limited", err: &providers.UpstreamStatusError{Status: 429}, want: TurnErrorRateLimited},
+		{name: "invalid request", err: &providers.UpstreamStatusError{Status: 400}, want: TurnErrorInvalidRequest},
+		{name: "unknown model", err: &providers.UpstreamStatusError{Status: 404}, want: TurnErrorModelNotFound},
+		{name: "rejected credential", err: &providers.UpstreamStatusError{Status: 401}, want: TurnErrorAuthRejected},
+		{name: "overloaded", err: &providers.UpstreamStatusError{Status: 529}, want: TurnErrorUpstream5xx},
+		{name: "other 4xx", err: &providers.UpstreamStatusError{Status: 409}, want: TurnErrorUpstream4xx},
+		{name: "status wins over the stream owner", err: fmt.Errorf("%w: %w", &providers.UpstreamStatusError{Status: 502}, context.Canceled), want: TurnErrorUpstream5xx},
+		{name: "cut stream", err: io.ErrUnexpectedEOF, want: TurnErrorStreamCut},
+		{name: "watchdog abort is not a client cancel", err: fmt.Errorf("%w: %w", providers.ErrUpstreamIdleTimeout, context.Canceled), want: TurnErrorStreamStalled},
+		{name: "client cancel", err: context.Canceled, want: TurnErrorClientCanceled},
+		{name: "deadline", err: context.DeadlineExceeded, want: TurnErrorTimeout},
+		{name: "unattributable failure", err: errors.New("stream closed"), want: TurnErrorOther},
+		{name: "refusal", stopReason: "refusal", want: TurnErrorRefusal},
+		{name: "openai output cap", stopReason: "length", want: TurnErrorMaxTokens},
+		{name: "malformed tool call", stopReason: "tool_use", invalidToolArgs: 1, want: TurnErrorInvalidToolArgs},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, classifyTurnError(tc.err, tc.stopReason, tc.invalidToolArgs))
+		})
+	}
+}
+
 // Retryability describes a fresh replay of the same request, not the committed
 // turn: caller-side cuts are never worth replaying, an upstream that named a
 // non-retryable status has already answered, and everything else is the

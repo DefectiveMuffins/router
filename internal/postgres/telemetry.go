@@ -246,6 +246,11 @@ func (r *TelemetryRepo) InsertRequestTelemetry(ctx context.Context, p proxy.Inse
 		ServingReleaseID:                         stringPtrOrNil(p.ServingReleaseID),
 		ServingBindingID:                         stringPtrOrNil(p.ServingBindingID),
 		BoostOptimizerVersion:                    stringPtrOrNil(p.BoostOptimizerVersion),
+		UserPrompt:                               p.UserPrompt,
+		UserPromptGapMs:                          p.UserPromptGapMs,
+		UserPromptGapPriorModel:                  stringPtrOrNil(p.UserPromptGapPriorModel),
+		ErrorClass:                               stringPtrOrNil(string(p.ErrorClass)),
+		LatestToolCallCounts:                     p.LatestToolCallCounts,
 	})
 }
 

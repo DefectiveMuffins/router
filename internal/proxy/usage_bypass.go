@@ -550,6 +550,7 @@ func (s *Service) bypassToAnthropic(
 			UpstreamLatencyMs:      time.Since(proxyStart).Milliseconds(),
 			TotalLatencyMs:         time.Since(requestStart).Milliseconds(),
 			UpstreamStatusCode:     int32(upstreamStatus(proxyErr)),
+			ErrorClass:             classifyTurnError(proxyErr, "", 0),
 			CaptureMode:            s.effectiveCaptureMode(ctx).String(),
 			TurnType:               string(turnType),
 			CacheCreationTokens:    cacheTokenPtr(cacheCreation),

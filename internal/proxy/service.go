@@ -144,6 +144,9 @@ type Service struct {
 	subAgentModel    string
 	// telemetry is an optional repository for persisting per-request telemetry.
 	telemetry TelemetryRepository
+	// turnClock times user prompts against the previous response; nil leaves
+	// the user_prompt_gap columns NULL.
+	turnClock SessionTurnClock
 	// captureMode controls whether high-fidelity `router.call` OTLP log
 	// records carry full request/response bodies, content hashes, or are
 	// suppressed entirely. Default CaptureOff (no log records emitted).
@@ -3648,6 +3651,8 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 	// runTurnLoop's switch-handover rewrite.
 	inboundToolCallCount := len(env.AssistantToolCallSignatures())
 	inboundLastUser := env.LastUserMessage()
+	inboundUserPrompt := env.EndsWithUserPrompt()
+	inboundLatestToolCalls := toolErrorCounts(env.LatestToolCallOutcomes())
 
 	overflowEstimate := env.ContextOverflowTokenEstimate()
 	excluded, ctxOverflowed := excludeContextOverflowModels(overflowEstimate, env.SignatureTokenSavings(), outputReserve, enabledProviders, baseExcluded, s.availableModels)
@@ -5110,6 +5115,11 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 			// Shadow-mode tier-cap instrumentation: tool-output size on
 			// tool_result turns. NULL elsewhere. No routing action taken.
 			ToolResultBytes: toolResultBytesPtr(inboundLastUser, tt),
+			// Typed-prompt timing input, failure bucket, and this request's
+			// own tool results, for the admin telemetry views.
+			UserPrompt:           &inboundUserPrompt,
+			ErrorClass:           classifyTurnError(proxyErr, respSummary.StopReason, respSummary.InvalidToolArgsBlocks),
+			LatestToolCallCounts: toolErrorCountsJSON(inboundLatestToolCalls),
 			// Credential attribution: safe display key parts, so a shared
 			// subscription (one account, many seats) shows via equal
 			// prefix/suffix across router_user_ids.
@@ -6217,6 +6227,7 @@ func (s *Service) fireTelemetry(p InsertTelemetryParams) {
 	}
 	log := observability.Get().With("request_id", p.RequestID)
 	observability.SafeGo(log, 5*time.Second, "fireTelemetry", func(ctx context.Context) {
+		s.applyUserPromptGap(ctx, log, &p)
 		if err := s.telemetry.InsertRequestTelemetry(ctx, p); err != nil {
 			// A dropped row is a dropped billing/session-cost record, so it is
 			// reported loudly enough to alert on.
@@ -6635,6 +6646,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	// Snapshot the inbound tool-output size before any env rewrite
 	// (runTurnLoop's switch handover); see toolResultBytesPtr.
 	inboundLastUser := env.LastUserMessage()
+	inboundUserPromptOAI := env.EndsWithUserPrompt()
 
 	overflowEstimateOAI := env.ContextOverflowTokenEstimate()
 	excludedOAI, ctxOverflowedOAI := excludeContextOverflowModels(overflowEstimateOAI, env.SignatureTokenSavings(), outputReserveOAI, enabledProviders, baseExcludedOAI, s.availableModels)
@@ -8001,6 +8013,8 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 			// Shadow-mode tier-cap instrumentation: tool-output size on
 			// tool_result turns. NULL elsewhere. No routing action taken.
 			ToolResultBytes: toolResultBytesPtr(inboundLastUser, tt),
+			UserPrompt:      &inboundUserPromptOAI,
+			ErrorClass:      classifyTurnError(proxyErr, respSummary.StopReason, respSummary.InvalidToolArgsBlocks),
 			// Credential attribution — see the Anthropic-path write site.
 			CredentialKeyPrefix: credentialKeyPrefix,
 			CredentialKeySuffix: credentialKeySuffix,
