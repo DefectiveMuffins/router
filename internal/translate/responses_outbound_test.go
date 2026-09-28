@@ -240,8 +240,8 @@ func TestPrepareOpenAIResponses_StaticFieldsPrecedeInput(t *testing.T) {
 }
 
 // TestPrepareOpenAIResponses_ToolChoiceVariants covers the Anthropic ->
-// Responses tool_choice mapping for "any" and named-tool; "auto" is covered
-// by TestPrepareOpenAIResponses_RequestShape.
+// Responses tool_choice mapping for "any", "none", and named-tool; "auto" is
+// covered by TestPrepareOpenAIResponses_RequestShape.
 func TestPrepareOpenAIResponses_ToolChoiceVariants(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -249,6 +249,7 @@ func TestPrepareOpenAIResponses_ToolChoiceVariants(t *testing.T) {
 		want       any
 	}{
 		{"any", `{"type":"any"}`, "required"},
+		{"none", `{"type":"none"}`, "none"},
 		{"tool", `{"type":"tool","name":"bash"}`, map[string]any{"type": "function", "name": "bash"}},
 	}
 	for _, tc := range cases {
