@@ -28,11 +28,12 @@ set -euo pipefail
 # revocation servers are unreachable, which is typical behind corporate proxies
 # (CRYPT_E_NO_REVOCATION_CHECK). --ssl-revoke-best-effort keeps the check but
 # tolerates that, matching what OpenSSL-backed curl already does.
+curl_uses_schannel=false
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    command curl -V 2>/dev/null | grep -qi schannel && curl_uses_schannel=true ;;
+esac
 curl() {
-  if [ -z "${curl_uses_schannel:-}" ]; then
-    curl_uses_schannel=false
-    command curl -V 2>/dev/null | grep -qi schannel && curl_uses_schannel=true
-  fi
   if [ "$curl_uses_schannel" = "true" ]; then
     command curl --ssl-revoke-best-effort "$@"
   else
