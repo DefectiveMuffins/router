@@ -269,6 +269,7 @@ func NewClient(transport http.RoundTripper) *http.Client {
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
+	transport = &trafficCaptureRoundTripper{transport: transport}
 	return &http.Client{Transport: observability.NewTracingTransport(transport), CheckRedirect: refuseRedirect}
 }
 

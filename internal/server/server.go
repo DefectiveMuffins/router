@@ -27,6 +27,7 @@ import (
 	"weave-os/router/internal/router/policy"
 	"weave-os/router/internal/server/middleware"
 	"weave-os/router/internal/subscriptions/entitlement"
+	"weave-os/router/internal/trafficcapture"
 
 	"github.com/gin-gonic/gin"
 )
@@ -110,6 +111,8 @@ func ParseDefaultStrategy(raw string) router.Strategy {
 
 // Features toggles optional request surfaces that are off by default.
 type Features struct {
+	// TrafficCapture records local conversation HTTP exchanges when explicitly configured.
+	TrafficCapture trafficcapture.Recorder
 	// PolicyPinEnabled registers the x-weave-policy-pin middleware. Off means
 	// the header is never read.
 	PolicyPinEnabled bool
@@ -143,6 +146,9 @@ func RegisterWithFeatures(engine *gin.Engine, authSvc *auth.Service, proxySvc *p
 		}, ", "))
 		c.Next()
 	})
+	if features.TrafficCapture != nil {
+		engine.Use(middleware.WithTrafficCapture(features.TrafficCapture))
+	}
 	// Managed mode: BYOK is opt-in per installation (see WithAuth).
 	byokRequiresOptIn := mode == DeploymentModeManaged
 	var policyPinMiddleware []gin.HandlerFunc

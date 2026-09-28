@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -1441,6 +1442,20 @@ func main() {
 	} else {
 		logger.Info("Usage observer wired; subscription-aware cost discount disabled", "observation_ttl", subscriptionTTL)
 	}
+	trafficCapture, err := newTrafficCaptureFromEnvironment()
+	if err != nil {
+		logger.Error("Unable to initialize local HTTP traffic capture", "err", err)
+		panic(err)
+	}
+	if trafficCapture != nil {
+		logger.Warn("Local HTTP traffic capture enabled; bodies may contain sensitive conversation content", "file", trafficCapture.file.Name(), "sensitive_headers_included", trafficCapture.includeSensitive)
+		defer func() {
+			if err := trafficCapture.Close(); err != nil {
+				logger.Error("Unable to close local HTTP traffic capture", "err", err)
+			}
+		}()
+	}
+
 	engine := gin.New()
 	engine.UnescapePathValues = true
 	engine.UseRawPath = true
@@ -1479,10 +1494,15 @@ func main() {
 			WithSubscriberAllowance(subscriberAllowanceSvc)
 		logger.Info("Individual subscriber allowance enforcement enabled")
 	}
-	server.RegisterWithFeatures(engine, authSvc, proxySvc, deployedModels, hmmRosterModels, deploymentMode, billingSvc, readinessChecker, hmmRosterSources, analyticsSvc, server.Features{PolicyPinEnabled: policyPinEnabled, ServingAdmission: servingAdmission, SubscriberAllowance: subscriberAllowanceSvc})
+	server.RegisterWithFeatures(engine, authSvc, proxySvc, deployedModels, hmmRosterModels, deploymentMode, billingSvc, readinessChecker, hmmRosterSources, analyticsSvc, server.Features{PolicyPinEnabled: policyPinEnabled, ServingAdmission: servingAdmission, SubscriberAllowance: subscriberAllowanceSvc, TrafficCapture: trafficCapture})
 
+	port := config.GetOr("PORT", "8080")
+	address := ":" + port
+	if trafficCapture != nil {
+		address = net.JoinHostPort("127.0.0.1", port)
+	}
 	srv := &http.Server{
-		Addr:    ":" + config.GetOr("PORT", "8080"),
+		Addr:    address,
 		Handler: engine,
 		// ReadTimeout/WriteTimeout would break streaming; per-route gin
 		// timeouts handle non-streaming routes instead.
