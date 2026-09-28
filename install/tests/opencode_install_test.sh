@@ -102,6 +102,9 @@ fi
 [ ! -e "$symlink_dir/opencode.json" ] || fail "install wrote the router key before rejecting the legacy symlink"
 
 run_install
+# Reinstall must upgrade a pre-400K managed limit, not preserve it.
+jq '.provider.weave.models.auto.limit.context = 128000' "$config" >"$config.tmp"
+mv "$config.tmp" "$config"
 install_output="$(run_install_output)"
 grep -Fq "npx @weave-os/router login claude" <<<"$install_output" || fail "install did not print the managed enrollment command"
 grep -Fq "npx @weave-os/router login codex" <<<"$install_output" || fail "install did not print the managed Codex enrollment command"
@@ -127,7 +130,7 @@ grep -Fq "Claude login requires an interactive terminal" <<<"$login_output" || f
 rm -rf "$claude_settings_dir"
 [ "$(jq -r '.model' "$config")" = "weave/auto" ] || fail "install did not activate weave/auto"
 [ "$(jq -r '.direct_model' "$parked")" = "anthropic/claude-sonnet-4-5" ] || fail "install did not park the previous model"
-[ "$(jq -r '.provider.weave.models.auto.limit.context' "$config")" = "128000" ] || fail "virtual model context limit is missing"
+[ "$(jq -r '.provider.weave.models.auto.limit.context' "$config")" = "400000" ] || fail "virtual model context limit is missing"
 [ "$(jq -r '.provider.weave.models.auto.limit.output' "$config")" = "32000" ] || fail "virtual model output limit is missing"
 [ "$(jq -r '.provider.weave.models.auto.reasoning' "$config")" = "true" ] || fail "virtual model reasoning capability is missing"
 [ "$(jq -r '.provider.weave.models.auto.attachment' "$config")" = "true" ] || fail "virtual model attachment capability is missing"
