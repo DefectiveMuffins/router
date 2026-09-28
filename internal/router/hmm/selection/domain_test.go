@@ -87,6 +87,26 @@ func TestSparseDomainScoresPreserveBaselineForAllMasks(t *testing.T) {
 	}))
 }
 
+func TestSparseDomainWithoutEvidencePreservesExistingSelection(t *testing.T) {
+	roster := dynamicRoster()
+	groups := []selection.Group{{Label: "low"}}
+	candidates := candidateSet("vendor-a/quality", "vendor-b/cheap")
+	qualityBias := 0.8
+	baselinePick, baselineScores, baselineComponents, baselineOrder, baselineOK := selection.SelectGroupsWithPreferences(
+		roster, groups, "", candidates, &qualityBias, []string{"vendor-b/cheap"}, nil, nil,
+	)
+	for _, profile := range []selection.DomainProfile{nil, fullProfile(selection.DomainInfra)} {
+		pick, scores, components, order, ok := selection.SelectGroupsWithDomainPreferences(
+			roster, groups, "", candidates, &qualityBias, []string{"vendor-b/cheap"}, nil, nil, nil, profile,
+		)
+		assert.Equal(t, baselineOK, ok)
+		assert.Equal(t, baselinePick, pick)
+		assert.Equal(t, baselineScores, scores)
+		assert.Equal(t, baselineComponents, components)
+		assert.Equal(t, baselineOrder, order)
+	}
+}
+
 func TestSparseDomainRetainsPinVendorAndEligibility(t *testing.T) {
 	roster := dynamicRoster()
 	evidence := domainEvidenceForTest(t, roster)
