@@ -82,17 +82,34 @@ func SelectGroupsWithPreferences(
 	subscriptionStatePreferredModels []string,
 	subsidizedModelCostFactor map[string]float64,
 ) (Pick, map[string]map[string]float32, map[string]map[string]router.SelectionScoreComponents, map[string][]string, bool) {
+	return SelectGroupsWithDomainPreferences(roster, groups, harness, candidates, qualityBias, preferredModels, subscriptionStatePreferredModels, subsidizedModelCostFactor, nil, nil)
+}
+
+// SelectGroupsWithDomainPreferences applies the pinned task correction only
+// within each existing complexity group; nil evidence preserves the old path.
+func SelectGroupsWithDomainPreferences(
+	roster *rosterdata.Roster,
+	groups []Group,
+	harness string,
+	candidates map[string]struct{},
+	qualityBias *float64,
+	preferredModels []string,
+	subscriptionStatePreferredModels []string,
+	subsidizedModelCostFactor map[string]float64,
+	evidence *DomainEvidence,
+	profile DomainProfile,
+) (Pick, map[string]map[string]float32, map[string]map[string]router.SelectionScoreComponents, map[string][]string, bool) {
 	scoresByGroup := make(map[string]map[string]float32, len(groups))
 	componentsByGroup := make(map[string]map[string]router.SelectionScoreComponents, len(groups))
 	ordersByGroup := make(map[string][]string, len(groups))
 	hasPreferenceInputs := len(preferredModels) > 0 || len(subscriptionStatePreferredModels) > 0 || len(subsidizedModelCostFactor) > 0
 	for _, group := range groups {
 		if cluster, ok := roster.Clusters[group.Label]; ok {
-			scores, components := scoresWithPreferences(roster, group.Label, cluster, qualityBias, preferredModels, subscriptionStatePreferredModels, subsidizedModelCostFactor)
+			scores, components, domainActive := scoresWithDomainPreferences(roster, group.Label, cluster, qualityBias, preferredModels, subscriptionStatePreferredModels, subsidizedModelCostFactor, evidence, profile)
 			scoresByGroup[group.Label] = scores
 			componentsByGroup[group.Label] = components
 			order, _ := ArmOrder(cluster, harness)
-			ordersByGroup[group.Label] = preferenceOrder(roster, group.Label, cluster, harness, order, qualityBias, hasPreferenceInputs, scores)
+			ordersByGroup[group.Label] = preferenceOrder(roster, group.Label, cluster, harness, order, qualityBias, hasPreferenceInputs || domainActive, scores)
 		}
 	}
 	depth := 0
@@ -195,7 +212,7 @@ func preferenceOrder(roster *rosterdata.Roster, label string, cluster rosterdata
 	return ranked
 }
 
-func scoresWithPreferences(
+func scoresWithDomainPreferences(
 	roster *rosterdata.Roster,
 	label string,
 	cluster rosterdata.Cluster,
@@ -203,8 +220,23 @@ func scoresWithPreferences(
 	preferredModels []string,
 	subscriptionStatePreferredModels []string,
 	subsidizedModelCostFactor map[string]float64,
-) (map[string]float32, map[string]router.SelectionScoreComponents) {
+	evidence *DomainEvidence,
+	profile DomainProfile,
+) (map[string]float32, map[string]router.SelectionScoreComponents, bool) {
 	scores := Scores(roster, label, cluster, qualityBias)
+	domainActive := false
+	if beta := TerminalInfluence(profile); evidence != nil && beta > 0 {
+		alpha := roster.Ranking.Alpha[label]
+		if qualityBias != nil {
+			alpha = EffectiveAlpha(roster, label, *qualityBias)
+		}
+		for arm, score := range scores {
+			cell := evidence.Arms[arm]
+			correction := float32(alpha * beta * (cell.TerminalQuality - cell.GlobalWII))
+			scores[arm] = score + correction
+			domainActive = domainActive || scores[arm] != score
+		}
+	}
 	preferredModelBonus := roster.Preferences.PreferredModelBonus
 	if preferredModelBonus == 0 {
 		preferredModelBonus = 0.5
@@ -234,7 +266,7 @@ func scoresWithPreferences(
 		scores[arm] = components.TotalScore
 		componentsByArm[arm] = components
 	}
-	return scores, componentsByArm
+	return scores, componentsByArm, domainActive
 }
 
 func preferenceRanks(models []string) map[string]int {
