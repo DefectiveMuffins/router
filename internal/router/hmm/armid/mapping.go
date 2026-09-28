@@ -18,6 +18,7 @@ var rosterAliases = map[string]string{
 	"claude-fable-5":       "anthropic/claude-fable-5",
 	"claude-fable-5-1":     "anthropic/claude-fable-5.1",
 	"claude-opus-5-5":      "anthropic/claude-opus-5.5",
+	"claude-sonnet-5-5":    "anthropic/claude-sonnet-5.5",
 	"moonshotai/kimi-k2.7": "moonshotai/kimi-k2.7-code",
 	// Bare first-party xAI IDs have no provider prefix to inherit, and the
 	// switch below deliberately stays empty for them (a bare ID whose primary

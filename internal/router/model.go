@@ -126,8 +126,8 @@ var (
 	anthropicAdaptiveXhigh = NewSpecWithReasoning(ReasoningCapabilities{Levels: []string{"low", "medium", "high", "max", "xhigh"}, AlwaysOn: true}, CapAdaptiveThinking, CapExtendedContext, CapXhighEffort)
 	// Opus 5 / Fable 5 add server-side fallback on top of the xhigh menu.
 	anthropicAdaptiveFallback = NewSpecWithReasoning(ReasoningCapabilities{Levels: []string{"low", "medium", "high", "max", "xhigh"}, AlwaysOn: true}, CapAdaptiveThinking, CapExtendedContext, CapXhighEffort, CapServerSideFallback)
-	// Fable 5.1 and Opus 5.5 additionally reject tool_choice any/tool ("not
-	// supported for this model"); opus-5 and fable-5 accept them.
+	// Fable 5.1, Opus 5.5, and Sonnet 5.5 additionally reject tool_choice
+	// any/tool ("not supported for this model"); opus-5 and fable-5 accept them.
 	anthropicAdaptiveFallbackAutoTools = NewSpecWithReasoning(ReasoningCapabilities{Levels: []string{"low", "medium", "high", "max", "xhigh"}, AlwaysOn: true}, CapAdaptiveThinking, CapExtendedContext, CapXhighEffort, CapServerSideFallback, CapAutoToolChoiceOnly)
 	anthropicExtended                  = NewSpecWithReasoning(ReasoningCapabilities{Levels: []string{"low", "medium", "high"}, SupportsBudget: true}, CapExtendedThinking)
 )
@@ -166,9 +166,11 @@ var registry = map[string]ModelSpec{
 	"claude-fable-5":   anthropicAdaptiveFallback,
 	"claude-fable-5-1": anthropicAdaptiveFallbackAutoTools,
 	"claude-opus-5-5":  anthropicAdaptiveFallbackAutoTools,
-	"claude-opus-5":    anthropicAdaptiveFallback,
-	"claude-opus-4-8":  anthropicAdaptiveXhigh,
-	"claude-opus-4-7":  anthropicAdaptiveXhigh,
+	// Sonnet 5.5 accepts xhigh, unlike Sonnet 5.
+	"claude-sonnet-5-5": anthropicAdaptiveFallbackAutoTools,
+	"claude-opus-5":     anthropicAdaptiveFallback,
+	"claude-opus-4-8":   anthropicAdaptiveXhigh,
+	"claude-opus-4-7":   anthropicAdaptiveXhigh,
 	// claude-sonnet-5 mirrors sonnet-4-6: no xhigh, since Sonnet tops out at
 	// effort "max" and marking xhigh unsupported clamps rather than 400s.
 	"claude-sonnet-5":   anthropicAdaptive,

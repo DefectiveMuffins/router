@@ -262,6 +262,13 @@ var Models = []Model{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00, CacheReadMultiplier: 0.10}},
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00, CacheReadMultiplier: 0.10}},
 	}},
+	// Sonnet 5.5: $2/$10, cache reads at $0.20/MTok (0.1x), no fast tier.
+	// Native 1M context; thinking cannot be disabled (between_tools is the
+	// floor) and forced tool_choice is rejected, like Opus 5.5.
+	{ID: "claude-sonnet-5-5", Source: SourceClosedSource, Tier: TierMid, ContextWindow: 1_000_000, Providers: []ProviderBinding{
+		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 2.00, OutputUSDPer1M: 10.00, CacheReadMultiplier: 0.10}},
+		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 2.00, OutputUSDPer1M: 10.00, CacheReadMultiplier: 0.10}},
+	}},
 	// Legacy Opus IDs kept passthrough-priced (no Tier — not a routing
 	// target; see gpt-4o below for the same pattern) so BYOK/direct-model
 	// requests billing-debit at real cost instead of catalog.PrimaryPriceFor

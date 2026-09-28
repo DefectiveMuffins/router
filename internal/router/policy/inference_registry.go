@@ -29,7 +29,7 @@ const (
 	// compaction cascade uses when the session has no warm Anthropic pin; the
 	// summary is the only record of the elided history, so it is worth a
 	// mid-tier model.
-	PrecompactionDefaultModel = "claude-sonnet-5"
+	PrecompactionDefaultModel = "claude-sonnet-5-5"
 	// PrecompactionLargeWindowModel is the big-context Anthropic-family
 	// summarizer for histories too large for PrecompactionDefaultModel.
 	PrecompactionLargeWindowModel = "claude-opus-5"
@@ -51,6 +51,7 @@ var compactionSummarizerModels = []string{
 	PrecompactionLargeWindowModel,
 	"claude-sonnet-4-5",
 	"claude-sonnet-4-6",
+	"claude-sonnet-5",
 	"claude-opus-4-0",
 	"claude-opus-4-1",
 	"claude-opus-4-5",

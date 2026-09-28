@@ -1230,6 +1230,7 @@ write_pi_models_config() {
         { id: "claude-fable-5",    name: "Claude Fable 5 (via Weave Router)",    reasoning: true, input: ["text","image"], contextWindow: 1000000, maxTokens: 128000 },
         { id: "claude-opus-5-5",   name: "Claude Opus 5.5 (via Weave Router)",   reasoning: true, input: ["text","image"], contextWindow: 1000000, maxTokens: 128000 },
         { id: "claude-opus-5",     name: "Claude Opus 5 (via Weave Router)",     reasoning: true, input: ["text","image"], contextWindow: 1000000, maxTokens: 128000 },
+        { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5 (via Weave Router)", reasoning: true, input: ["text","image"], contextWindow: 1000000, maxTokens: 128000 },
         { id: "claude-opus-4-7",   name: "Claude Opus 4.7 (via Weave Router)",   reasoning: true, input: ["text","image"], contextWindow: 1000000, maxTokens: 64000 },
         { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (via Weave Router)", reasoning: true, input: ["text","image"], contextWindow: 1000000, maxTokens: 64000 },
         { id: "claude-haiku-4-5",  name: "Claude Haiku 4.5 (via Weave Router)",  reasoning: true, input: ["text","image"], contextWindow: 200000, maxTokens: 32000 },
@@ -2618,7 +2619,7 @@ prepare_claude_context_window() {
   model="${model:-sonnet}"
   case "$model" in
     *'[1m]') context_window=""; return 0 ;;
-    sonnet|opus|fable|claude-sonnet-4-6|claude-sonnet-5|claude-opus-4-6|claude-opus-4-7|claude-opus-4-8|claude-opus-5|claude-opus-5-5|claude-fable-5|claude-fable-5-1) ;;
+    sonnet|opus|fable|claude-sonnet-4-6|claude-sonnet-5|claude-sonnet-5-5|claude-opus-4-6|claude-opus-4-7|claude-opus-4-8|claude-opus-5|claude-opus-5-5|claude-fable-5|claude-fable-5-1) ;;
     *) err "Cannot assert 1M support for '$model'. Select a supported Sonnet/Opus/Fable model first; leaving it unchanged."; return 1 ;;
   esac
   context_managed_model="${model}[1m]"
@@ -5665,6 +5666,7 @@ prices='{
     "claude-sonnet-4-5":                0.003,
     "claude-sonnet-4-6":                0.003,
     "claude-sonnet-5":                  0.003,
+    "claude-sonnet-5-5":                0.002,
     "deepseek/deepseek-v4-flash":       0.0001134,
     "deepseek/deepseek-v4-pro":         0.00174,
     "deepseek/deepseek-v4-pro-0813":    0.00174,
@@ -5754,6 +5756,7 @@ prices='{
     "claude-sonnet-4-5":                0.015,
     "claude-sonnet-4-6":                0.015,
     "claude-sonnet-5":                  0.015,
+    "claude-sonnet-5-5":                0.01,
     "deepseek/deepseek-v4-flash":       0.0002791,
     "deepseek/deepseek-v4-pro":         0.00348,
     "deepseek/deepseek-v4-pro-0813":    0.00348,
@@ -5843,6 +5846,7 @@ prices='{
     "claude-sonnet-4-5":                0.1,
     "claude-sonnet-4-6":                0.1,
     "claude-sonnet-5":                  0.1,
+    "claude-sonnet-5-5":                0.1,
     "deepseek/deepseek-v4-flash":       0.2,
     "deepseek/deepseek-v4-pro":         0.0862,
     "deepseek/deepseek-v4-pro-0813":    0.0862,
