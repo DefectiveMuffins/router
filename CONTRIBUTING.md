@@ -78,11 +78,19 @@ non-trivial work.
 make generate     # regenerate SQLC + statusline (no DB required)
 make build        # typecheck the whole module
 make test         # run all tests
-make check        # generate + build + test (CI-equivalent)
+make check        # local docs + generation + Go + installer checks
+make doctor       # read-only prerequisites; no env files or services loaded
+make check-plan   # applicable suites including uncommitted changes
+make check-changed # local suites; required integrations remain visibly blocked
 ```
 
-The CI required-checks gate is `make check`, plus `git diff --quiet`
-after `make generate` (to catch uncommitted regenerated code).
+`make check` is not all of CI: lint, database migration roundtrips, disposable-DB
+serving checks, sidecar/artifact contracts, frontend checks and smoke have their own
+prerequisites and gates. The planner lists relevant suites and their limitations.
+Use `git diff --quiet` after generation to detect drift; preserve unrelated changes.
+`python3 scripts/agent_checks.py run --integration` additionally permits local
+integration fixtures/downloads, never provider recording. The runner reports blocked
+checks instead of treating missing infrastructure as successful validation.
 
 ### Hot-reload dev loop
 
@@ -174,7 +182,7 @@ Rules:
 
 ## Logging
 
-- Use `slog` via `observability.Get` / `observability.FromGin`. Never
+- Use `slog` via `observability.FromContext` / `observability.FromGin` on request paths; reserve `observability.Get` for startup/background work. Never
   `fmt.Println` or `log.Print*`.
 - Snake_case attribute keys (`api_key_id`, not `apiKeyID`).
 - `Debug` for routine ops (auth checks, repo calls), `Info` for major

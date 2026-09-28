@@ -27,3 +27,6 @@ jobs:
 
       - name: Check documentation references
         run: make check-docs
+
+      - name: Test agent validation tools
+        run: python3 -m unittest discover -s scripts -p 'test_agent_checks.py'

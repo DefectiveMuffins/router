@@ -39,7 +39,7 @@ services:
       SMOKE_PROXY_LISTEN: ":8888"
       SMOKE_PROXY_CERT_DIR: /certs
       SMOKE_PROXY_CACHE_DIR: /cassettes
-      SMOKE_PROXY_MODE: ${SMOKE_PROXY_MODE:-replay-or-record}
+      SMOKE_PROXY_MODE: ${SMOKE_PROXY_MODE:-replay-only}
     healthcheck:
       # distroless/static has no shell/curl; the binary probes its own port.
       test: ["CMD", "/mitmproxy", "-healthcheck"]

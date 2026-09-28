@@ -47,6 +47,7 @@ dist/
 .DS_Store
 
 # Local caches
+.context/
 .bench-cache/
 .embedding-cache/
 .local/
