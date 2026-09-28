@@ -8,10 +8,33 @@ INSERT INTO router.llm_escalation_sessions(scope,lifetime,installation_id,state,
 VALUES(@scope::bytea, @lifetime::uuid, @installation_id::uuid, @state::jsonb,clock_timestamp()+interval '24 hours')
 ON CONFLICT(scope) DO NOTHING;
 
--- name: GetLLMEscalationSessionLocked :one
--- Session bookkeeping is serialized only within short transactions.
+-- name: UpdateLLMEscalationSessionStart :one
+-- Refresh activity and fence changed instructions in one row update.
+WITH refreshed_at AS (SELECT clock_timestamp() AS value)
+UPDATE router.llm_escalation_sessions s
+SET state = jsonb_set(
+      jsonb_set(
+        jsonb_set(s.state - 'pending', '{instruction_fingerprint}', @fingerprint::jsonb),
+        '{generation}', to_jsonb((s.state->>'generation')::bigint +
+          CASE WHEN s.state->'instruction_fingerprint' IS DISTINCT FROM @fingerprint::jsonb THEN 1 ELSE 0 END)
+      ),
+      '{last_activity_at}', to_jsonb(refreshed_at.value)
+    ),
+    updated_at = refreshed_at.value,
+    expires_at = refreshed_at.value + interval '24 hours'
+FROM refreshed_at
+WHERE s.scope = @scope::bytea AND s.expires_at > refreshed_at.value
+RETURNING s.state;
+
+-- name: GetLLMEscalationSessionForMutation :one
+-- Non-key state updates exclude competing session writes without blocking key-share checks.
 SELECT state FROM router.llm_escalation_sessions
-WHERE scope= @scope::bytea AND expires_at>clock_timestamp() FOR UPDATE;
+WHERE scope= @scope::bytea AND expires_at>clock_timestamp() FOR NO KEY UPDATE;
+
+-- name: GetLLMEscalationSessionShared :one
+-- Session readers must still exclude a concurrent generation or lifetime change.
+SELECT state FROM router.llm_escalation_sessions
+WHERE scope= @scope::bytea AND expires_at>clock_timestamp() FOR SHARE;
 
 -- name: UpdateLLMEscalationSession :execrows
 -- Lifetime ownership prevents a stale request from resurrecting expired state.
@@ -19,9 +42,15 @@ UPDATE router.llm_escalation_sessions SET state= @state::jsonb,updated_at=clock_
 WHERE scope= @scope::bytea AND lifetime= @lifetime::uuid AND expires_at>clock_timestamp();
 
 -- name: InsertLLMEscalationCompletion :execrows
--- Duplicate responses neither advance cadence nor create another paid checkpoint.
+-- Key-share fences expiry deletion; the later session lock validates generation again.
 INSERT INTO router.llm_escalation_completions(lifetime,boundary)
-VALUES(@lifetime::uuid, @boundary::bytea) ON CONFLICT DO NOTHING;
+SELECT s.lifetime, @boundary::bytea
+FROM router.llm_escalation_sessions s
+WHERE s.scope = @scope::bytea AND s.lifetime = @lifetime::uuid
+  AND (s.state->>'generation')::bigint = @generation::bigint
+  AND s.expires_at > clock_timestamp()
+FOR KEY SHARE OF s
+ON CONFLICT DO NOTHING;
 
 -- name: InsertLLMEscalationJob :exec
 -- A checkpoint retains bounded operational metadata, never the transcript.

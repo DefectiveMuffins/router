@@ -212,6 +212,22 @@ func (q *Queries) GetLLMEscalationSessionDetail(ctx context.Context, arg GetLLME
 	return state, err
 }
 
+const getLLMEscalationSessionForMutation = `-- name: GetLLMEscalationSessionForMutation :one
+SELECT state FROM router.llm_escalation_sessions
+WHERE scope= $1::bytea AND expires_at>clock_timestamp() FOR NO KEY UPDATE
+`
+
+// Non-key state updates exclude competing session writes without blocking key-share checks.
+//
+//	SELECT state FROM router.llm_escalation_sessions
+//	WHERE scope= $1::bytea AND expires_at>clock_timestamp() FOR NO KEY UPDATE
+func (q *Queries) GetLLMEscalationSessionForMutation(ctx context.Context, scope []byte) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getLLMEscalationSessionForMutation, scope)
+	var state []byte
+	err := row.Scan(&state)
+	return state, err
+}
+
 const getLLMEscalationSessionJobs = `-- name: GetLLMEscalationSessionJobs :many
 SELECT job FROM router.llm_escalation_jobs WHERE lifetime= $1::uuid ORDER BY checkpoint DESC
 `
@@ -239,17 +255,17 @@ func (q *Queries) GetLLMEscalationSessionJobs(ctx context.Context, lifetime uuid
 	return items, nil
 }
 
-const getLLMEscalationSessionLocked = `-- name: GetLLMEscalationSessionLocked :one
+const getLLMEscalationSessionShared = `-- name: GetLLMEscalationSessionShared :one
 SELECT state FROM router.llm_escalation_sessions
-WHERE scope= $1::bytea AND expires_at>clock_timestamp() FOR UPDATE
+WHERE scope= $1::bytea AND expires_at>clock_timestamp() FOR SHARE
 `
 
-// Session bookkeeping is serialized only within short transactions.
+// Session readers must still exclude a concurrent generation or lifetime change.
 //
 //	SELECT state FROM router.llm_escalation_sessions
-//	WHERE scope= $1::bytea AND expires_at>clock_timestamp() FOR UPDATE
-func (q *Queries) GetLLMEscalationSessionLocked(ctx context.Context, scope []byte) ([]byte, error) {
-	row := q.db.QueryRow(ctx, getLLMEscalationSessionLocked, scope)
+//	WHERE scope= $1::bytea AND expires_at>clock_timestamp() FOR SHARE
+func (q *Queries) GetLLMEscalationSessionShared(ctx context.Context, scope []byte) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getLLMEscalationSessionShared, scope)
 	var state []byte
 	err := row.Scan(&state)
 	return state, err
@@ -365,20 +381,39 @@ func (q *Queries) GetLLMEscalationSummary(ctx context.Context, arg GetLLMEscalat
 
 const insertLLMEscalationCompletion = `-- name: InsertLLMEscalationCompletion :execrows
 INSERT INTO router.llm_escalation_completions(lifetime,boundary)
-VALUES($1::uuid, $2::bytea) ON CONFLICT DO NOTHING
+SELECT s.lifetime, $1::bytea
+FROM router.llm_escalation_sessions s
+WHERE s.scope = $2::bytea AND s.lifetime = $3::uuid
+  AND (s.state->>'generation')::bigint = $4::bigint
+  AND s.expires_at > clock_timestamp()
+FOR KEY SHARE OF s
+ON CONFLICT DO NOTHING
 `
 
 type InsertLLMEscalationCompletionParams struct {
-	Lifetime uuid.UUID
-	Boundary []byte
+	Boundary   []byte
+	Scope      []byte
+	Lifetime   uuid.UUID
+	Generation int64
 }
 
-// Duplicate responses neither advance cadence nor create another paid checkpoint.
+// Key-share fences expiry deletion; the later session lock validates generation again.
 //
 //	INSERT INTO router.llm_escalation_completions(lifetime,boundary)
-//	VALUES($1::uuid, $2::bytea) ON CONFLICT DO NOTHING
+//	SELECT s.lifetime, $1::bytea
+//	FROM router.llm_escalation_sessions s
+//	WHERE s.scope = $2::bytea AND s.lifetime = $3::uuid
+//	  AND (s.state->>'generation')::bigint = $4::bigint
+//	  AND s.expires_at > clock_timestamp()
+//	FOR KEY SHARE OF s
+//	ON CONFLICT DO NOTHING
 func (q *Queries) InsertLLMEscalationCompletion(ctx context.Context, arg InsertLLMEscalationCompletionParams) (int64, error) {
-	result, err := q.db.Exec(ctx, insertLLMEscalationCompletion, arg.Lifetime, arg.Boundary)
+	result, err := q.db.Exec(ctx, insertLLMEscalationCompletion,
+		arg.Boundary,
+		arg.Scope,
+		arg.Lifetime,
+		arg.Generation,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -619,4 +654,51 @@ func (q *Queries) UpdateLLMEscalationSession(ctx context.Context, arg UpdateLLME
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateLLMEscalationSessionStart = `-- name: UpdateLLMEscalationSessionStart :one
+WITH refreshed_at AS (SELECT clock_timestamp() AS value)
+UPDATE router.llm_escalation_sessions s
+SET state = jsonb_set(
+      jsonb_set(
+        jsonb_set(s.state - 'pending', '{instruction_fingerprint}', $1::jsonb),
+        '{generation}', to_jsonb((s.state->>'generation')::bigint +
+          CASE WHEN s.state->'instruction_fingerprint' IS DISTINCT FROM $1::jsonb THEN 1 ELSE 0 END)
+      ),
+      '{last_activity_at}', to_jsonb(refreshed_at.value)
+    ),
+    updated_at = refreshed_at.value,
+    expires_at = refreshed_at.value + interval '24 hours'
+FROM refreshed_at
+WHERE s.scope = $2::bytea AND s.expires_at > refreshed_at.value
+RETURNING s.state
+`
+
+type UpdateLLMEscalationSessionStartParams struct {
+	Fingerprint []byte
+	Scope       []byte
+}
+
+// Refresh activity and fence changed instructions in one row update.
+//
+//	WITH refreshed_at AS (SELECT clock_timestamp() AS value)
+//	UPDATE router.llm_escalation_sessions s
+//	SET state = jsonb_set(
+//	      jsonb_set(
+//	        jsonb_set(s.state - 'pending', '{instruction_fingerprint}', $1::jsonb),
+//	        '{generation}', to_jsonb((s.state->>'generation')::bigint +
+//	          CASE WHEN s.state->'instruction_fingerprint' IS DISTINCT FROM $1::jsonb THEN 1 ELSE 0 END)
+//	      ),
+//	      '{last_activity_at}', to_jsonb(refreshed_at.value)
+//	    ),
+//	    updated_at = refreshed_at.value,
+//	    expires_at = refreshed_at.value + interval '24 hours'
+//	FROM refreshed_at
+//	WHERE s.scope = $2::bytea AND s.expires_at > refreshed_at.value
+//	RETURNING s.state
+func (q *Queries) UpdateLLMEscalationSessionStart(ctx context.Context, arg UpdateLLMEscalationSessionStartParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, updateLLMEscalationSessionStart, arg.Fingerprint, arg.Scope)
+	var state []byte
+	err := row.Scan(&state)
+	return state, err
 }
