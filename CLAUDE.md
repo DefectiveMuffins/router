@@ -6,8 +6,8 @@ Root guide for AI agents in the `router/` subproject. Start here, then read the 
 
 ## Production incident entrypoint
 
-For a router log/error plus **fix**, use [router-fix](.agents/skills/router-fix/SKILL.md).
-For diagnosis-only requests, investigate without editing. Identify the incident-time
+For a router repair, establish a synthetic failing regression before changing behavior
+and run it unchanged against the fix. For diagnosis-only requests, investigate without editing. Identify the incident-time
 serving revision and configuration before applying current source assumptions. A local
 repair does not authorize production mutation or establish production recovery.
 

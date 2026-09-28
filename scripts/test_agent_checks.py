@@ -1,13 +1,15 @@
 import importlib.util
 import json
 import os
+import select
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-
 
 SPEC = importlib.util.spec_from_file_location(
     "agent_checks", Path(__file__).with_name("agent_checks.py")
@@ -64,7 +66,7 @@ class AgentChecksTest(unittest.TestCase):
         with patch.object(
             CHECKS.shutil, "which", return_value="available"
         ), patch.object(
-            CHECKS.subprocess, "run", return_value=subprocess.CompletedProcess([], 42)
+            CHECKS, "run_command", return_value=subprocess.CompletedProcess([], 42)
         ):
             receipt = CHECKS.run_suite(Path.cwd(), suite, True)
         self.assertEqual(CHECKS.Outcome.FAILED, receipt["outcome"])
@@ -202,7 +204,7 @@ class AgentChecksTest(unittest.TestCase):
         )
         with patch.object(
             CHECKS.shutil, "which", return_value="available"
-        ), patch.object(CHECKS.subprocess, "run") as run:
+        ), patch.object(CHECKS, "run_command") as run:
             receipt = CHECKS.run_suite(Path.cwd(), suite, False)
         run.assert_not_called()
         self.assertEqual(CHECKS.Outcome.BLOCKED, receipt["outcome"])
@@ -214,11 +216,101 @@ class AgentChecksTest(unittest.TestCase):
         with patch.object(
             CHECKS.shutil, "which", return_value="available"
         ), patch.object(
-            CHECKS.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)
+            CHECKS, "run_command", return_value=subprocess.CompletedProcess([], 1)
         ):
             receipt = CHECKS.run_suite(Path.cwd(), suite, False)
         self.assertEqual(CHECKS.Outcome.FAILED, receipt["outcome"])
         self.assertEqual(1, len(receipt["commands"]))
+
+    def test_timeout_stops_descendants_even_after_parent_exits(self):
+        for capture in (False, True):
+            with self.subTest(
+                capture=capture
+            ), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                activity = root / "child-activity"
+                child_code = (
+                    "import signal, time\nfrom pathlib import Path\n"
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                    f"activity = Path({str(activity)!r})\n"
+                    "while True:\n"
+                    "    with activity.open('a') as stream: stream.write('running\\n')\n"
+                    "    time.sleep(0.02)\n"
+                )
+                parent_code = (
+                    "import subprocess, sys, time\n"
+                    f"subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+                    "time.sleep(60)\n"
+                )
+                command = (sys.executable, "-c", parent_code)
+                with patch.object(CHECKS, "SUITE_TIMEOUT_SECONDS", 1), patch.object(
+                    CHECKS, "SHUTDOWN_GRACE_SECONDS", 0.1
+                ):
+                    if capture:
+                        with self.assertRaises(subprocess.TimeoutExpired):
+                            CHECKS.run_command(
+                                command,
+                                timeout=1,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                            )
+                    else:
+                        suite = CHECKS.Suite(CHECKS.SuiteID.TOOLING, (), (command,), ())
+                        receipt = CHECKS.run_suite(root, suite, False)
+                        self.assertEqual(CHECKS.Outcome.BLOCKED, receipt["outcome"])
+                        self.assertEqual("TimeoutExpired", receipt["reason"])
+                last_activity = activity.read_text()
+                self.assertTrue(last_activity)
+                time.sleep(0.15)
+                self.assertEqual(last_activity, activity.read_text())
+
+    def test_cancellation_waits_for_smoke_owner_cleanup(self):
+        owner_code = (
+            "import signal, time\n"
+            "def interrupt(signum, frame): raise KeyboardInterrupt\n"
+            "signal.signal(signal.SIGTERM, interrupt)\n"
+            "try:\n"
+            "    print('owner-ready', flush=True)\n"
+            "    time.sleep(60)\n"
+            "except KeyboardInterrupt:\n"
+            "    print('cleanup-started', flush=True)\n"
+            "    time.sleep(0.3)\n"
+            "    print('cleanup-finished', flush=True)\n"
+        )
+        planner_code = (
+            "import agent_checks as checks\nimport sys\nfrom pathlib import Path\n"
+            "checks.SHUTDOWN_GRACE_SECONDS = 0.05\n"
+            f"command = (sys.executable, '-c', {owner_code!r})\n"
+            "suite = checks.Suite(checks.SuiteID.SMOKE, (), (command,), (), integration=True)\n"
+            "try: checks.run_suite(Path.cwd(), suite, True)\n"
+            "except KeyboardInterrupt: print('planner-cancelled', flush=True)\n"
+        )
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signum=signum):
+                planner = subprocess.Popen(
+                    [sys.executable, "-c", planner_code],
+                    cwd=Path(__file__).parent,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    start_new_session=True,
+                )
+                try:
+                    self.assertTrue(select.select([planner.stdout], [], [], 5)[0])
+                    self.assertEqual("owner-ready\n", planner.stdout.readline())
+                    planner.send_signal(signum)
+                    self.assertTrue(select.select([planner.stdout], [], [], 5)[0])
+                    self.assertEqual("cleanup-started\n", planner.stdout.readline())
+                    planner.send_signal(
+                        signum
+                    )  # A repeated cancel cannot abort teardown.
+                    output, _ = planner.communicate(timeout=5)
+                    self.assertEqual("cleanup-finished\nplanner-cancelled\n", output)
+                    self.assertEqual(0, planner.returncode)
+                finally:
+                    if planner.poll() is None:
+                        planner.kill()
+                    planner.communicate(timeout=5)
 
     def test_real_children_cannot_adopt_ambient_credentials_or_live_test_flags(self):
         poisoned = {

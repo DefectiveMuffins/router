@@ -8,6 +8,7 @@ import fnmatch
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -50,6 +51,57 @@ class ProxyMode(StrEnum):
     REPLAY = "replay-only"
     RECORD = "record"
     REPLAY_OR_RECORD = "replay-or-record"
+
+
+PROXY_MODE_ENV = "SMOKE_PROXY_MODE"
+SUITE_TIMEOUT_SECONDS = 1200
+SHUTDOWN_GRACE_SECONDS = 10
+
+
+def run_command(
+    command, *, timeout: float | None, cleanup_owner: bool = False, **options
+) -> subprocess.CompletedProcess:
+    """Own the command's process group until completion, timeout or interruption."""
+
+    def interrupt(signum, frame):
+        raise KeyboardInterrupt
+
+    previous_terminate = signal.signal(signal.SIGTERM, interrupt)
+    try:
+        child = subprocess.Popen(command, start_new_session=True, **options)
+        try:
+            stdout, stderr = child.communicate(timeout=timeout)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            if cleanup_owner:
+                # Smoke owns Docker teardown and has bounded command deadlines.
+                # Do not kill it mid-cleanup, even if cancellation is repeated.
+                while True:
+                    try:
+                        child.communicate()
+                        break
+                    except KeyboardInterrupt:
+                        continue
+            else:
+                try:
+                    child.communicate(timeout=SHUTDOWN_GRACE_SECONDS)
+                except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                    pass
+                finally:
+                    # A parent may exit while a descendant ignores SIGTERM.
+                    # Stop the group even if communicate() already returned.
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    child.communicate(timeout=SHUTDOWN_GRACE_SECONDS)
+            raise
+        return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+    finally:
+        signal.signal(signal.SIGTERM, previous_terminate)
 
 
 @dataclass(frozen=True)
@@ -411,7 +463,7 @@ def validation_environment(suite: SuiteID) -> dict[str, str]:
     # which could otherwise skip assertions or enable live integration tags.
     environment["GOFLAGS"] = "-mod=readonly"
     if suite == SuiteID.SMOKE:
-        environment["SMOKE_PROXY_MODE"] = ProxyMode.REPLAY.value
+        environment[PROXY_MODE_ENV] = ProxyMode.REPLAY.value
     return environment
 
 
@@ -432,35 +484,27 @@ def run_suite(root: Path, suite: Suite, integration: bool) -> dict:
         return receipt
     commands = suite.commands
     if suite.id == SuiteID.INSTALL:
-        commands = tuple(
-            ("bash", str(path.relative_to(root)))
-            for path in sorted((root / "install/tests").glob("*_test.sh"))
-        ) + (
-            (
-                "python3",
-                "-m",
-                "unittest",
-                "discover",
-                "-s",
-                "install/pi-router/test",
-                "-p",
-                "test_*.py",
-            ),
+        commands = (
+            tuple(
+                ("bash", str(path.relative_to(root)))
+                for path in sorted((root / "install/tests").glob("*_test.sh"))
+            )
+            + suite.commands
         )
     for command in commands:
         # Go/uv may fetch dependencies; no suite adopts a shell's test database,
         # live sidecar, provider keys, alternate installer or recording mode.
         command_env = validation_environment(suite.id)
         try:
-            # The smoke owner handles deadlines/signals and cleans its own stack;
-            # subprocess.run's timeout would SIGKILL it and bypass that cleanup.
-            proc = subprocess.run(
+            # The smoke owner handles its own deadlines and stack cleanup.
+            proc = run_command(
                 command,
                 cwd=root,
                 env=command_env,
                 stdout=sys.stderr,
                 stderr=sys.stderr,
-                timeout=None if suite.id == SuiteID.SMOKE else 1200,
+                timeout=None if suite.id == SuiteID.SMOKE else SUITE_TIMEOUT_SECONDS,
+                cleanup_owner=suite.id == SuiteID.SMOKE,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             receipt["reason"] = type(error).__name__

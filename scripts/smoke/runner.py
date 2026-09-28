@@ -21,11 +21,12 @@ from uuid import uuid4
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from agent_checks import (  # noqa: E402 - standalone script needs scripts/ on sys.path
+    PROXY_MODE_ENV,
     ProxyMode,
     SuiteID,
+    run_command,
     validation_environment,
 )
-
 
 OWNER_LABEL = "ai.weave.smoke-owner"
 PLACEHOLDER_KEY = "smoke-fixture-key-unused-outside-replay"
@@ -33,7 +34,17 @@ COMMAND_TIMEOUT_SECONDS = 120
 BUILD_TIMEOUT_SECONDS = 1200
 BOOT_TIMEOUT_SECONDS = 180
 TEST_TIMEOUT_SECONDS = 600
-SHUTDOWN_GRACE_SECONDS = 10
+HEALTH_TIMEOUT_SECONDS = 120
+HEALTH_POLL_SECONDS = 2
+ROUTER_PORT = 8080
+MINIMUM_COMPOSE_VERSION = (2, 24, 4)
+MODEL_OVERRIDE_ENVIRONMENTS = ("SMOKE_PIN_MODEL", "SMOKE_OPENAI_PIN_MODEL")
+CLIENT_ENVIRONMENTS = (
+    "SMOKE_ROUTER_KEY",
+    "SMOKE_BASE_URL",
+    "SMOKE_OPENAI_ENABLED",
+    *MODEL_OVERRIDE_ENVIRONMENTS,
+)
 SMOKE_DEPLOYMENT_MODE: Literal["selfhosted"] = "selfhosted"
 SMOKE_ROUTER_STRATEGY: Literal["cluster"] = "cluster"
 
@@ -70,9 +81,7 @@ def log(message: str) -> None:
 
 class SmokeRun:
     def __init__(self) -> None:
-        self.mode = ProxyMode(
-            os.environ.get("SMOKE_PROXY_MODE", ProxyMode.REPLAY.value)
-        )
+        self.mode = ProxyMode(os.environ.get(PROXY_MODE_ENV, ProxyMode.REPLAY.value))
         if os.environ.get("SMOKE_BASE_URL"):
             raise ValueError(
                 "SMOKE_BASE_URL is test-client-only; the runner always allocates its own localhost port"
@@ -95,7 +104,7 @@ class SmokeRun:
             for key, value in validation_environment(SuiteID.SMOKE).items()
             if not key.startswith("COMPOSE_")
         }
-        self.environment["SMOKE_PROXY_MODE"] = self.mode.value
+        self.environment[PROXY_MODE_ENV] = self.mode.value
         self.environment["COMPOSE_DISABLE_ENV_FILE"] = "1"
         self.record_credentials: dict[str, str] = {}
         if self.mode != ProxyMode.REPLAY:
@@ -129,49 +138,18 @@ class SmokeRun:
                     command_environment["ACTIONS_RUNTIME_TOKEN"] = os.environ[
                         "ACTIONS_RUNTIME_TOKEN"
                     ]
-        child = subprocess.Popen(
+        completed = run_command(
             arguments,
             cwd=REPO_ROOT,
             env=command_environment,
-            start_new_session=True,
             text=True,
             stdout=subprocess.PIPE if capture else None,
             stderr=subprocess.PIPE if capture else None,
-        )
-        try:
-            stdout, stderr = child.communicate(
-                timeout=timeout if timeout is not None else COMMAND_TIMEOUT_SECONDS
-            )
-        except (subprocess.TimeoutExpired, KeyboardInterrupt):
-            self.stop_command(child)
-            raise
-        completed = subprocess.CompletedProcess(
-            arguments, child.returncode, stdout, stderr
+            timeout=timeout if timeout is not None else COMMAND_TIMEOUT_SECONDS,
         )
         if check:
             completed.check_returncode()
         return completed
-
-    @staticmethod
-    def stop_command(child: subprocess.Popen) -> None:
-        # Stop the owned CLI and its compiler/test descendants before inspecting
-        # Docker ownership and tearing down the invocation's resources.
-        try:
-            os.killpg(child.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            child.communicate(timeout=SHUTDOWN_GRACE_SECONDS)
-        except subprocess.TimeoutExpired:
-            pass
-        finally:
-            # The parent can exit while a descendant ignores SIGTERM. Its
-            # process group must be stopped even when communicate has returned.
-            try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            child.communicate(timeout=SHUTDOWN_GRACE_SECONDS)
 
     def resource_ids(self, kind: DockerResourceKind) -> list[str]:
         flags = ["--all"] if kind == DockerResourceKind.CONTAINER else []
@@ -219,9 +197,9 @@ class SmokeRun:
             "docker", "compose", "version", "--short", capture=True
         ).stdout.strip()
         parsed = re.match(r"v?(\d+)\.(\d+)\.(\d+)", version)
-        if not parsed or tuple(map(int, parsed.groups())) < (2, 24, 4):
+        if not parsed or tuple(map(int, parsed.groups())) < MINIMUM_COMPOSE_VERSION:
             raise RuntimeError(
-                "smoke isolation requires Docker Compose >= 2.24.4 (!override support)"
+                f"smoke isolation requires Docker Compose >= {'.'.join(map(str, MINIMUM_COMPOSE_VERSION))} (!override support)"
             )
         self.require_owned_resources(empty=True)
         self.directory = Path(tempfile.mkdtemp(prefix="router-smoke-"))
@@ -256,7 +234,7 @@ class SmokeRun:
         replay = self.mode == ProxyMode.REPLAY
         server_environment = {
             "DATABASE_URL": "postgres://router:router@postgres:5432/router?sslmode=disable",
-            "PORT": "8080",
+            "PORT": str(ROUTER_PORT),
             "ROUTER_DEPLOYMENT_MODE": SMOKE_DEPLOYMENT_MODE,
             "ROUTER_DEFAULT_STRATEGY": SMOKE_ROUTER_STRATEGY,
             "ROUTER_ONNX_ASSETS_DIR": "/opt/router/assets",
@@ -304,9 +282,9 @@ class SmokeRun:
                 # relay has no proxy protocol or arbitrary upstream selection.
                 lines += [
                     "    image: postgres:15-alpine",
-                    f"    entrypoint: {json.dumps(['/bin/busybox', 'nc', '-lk', '-p', '8080', '-e', '/bin/busybox', 'nc', ComposeService.SERVER, '8080'])}",
+                    f"    entrypoint: {json.dumps(['/bin/busybox', 'nc', '-lk', '-p', str(ROUTER_PORT), '-e', '/bin/busybox', 'nc', ComposeService.SERVER, str(ROUTER_PORT)])}",
                     "    networks: [default, ingress]",
-                    '    ports: !override ["127.0.0.1::8080"]',
+                    f'    ports: !override ["127.0.0.1::{ROUTER_PORT}"]',
                     "    read_only: true",
                     "    cap_drop: [ALL]",
                     "    security_opt: [no-new-privileges:true]",
@@ -323,7 +301,7 @@ class SmokeRun:
                     "      - mitm_certs:/certs",
                     f"      - ./smoke/mitmproxy/cassettes:/cassettes:{cassette_mode}",
                     "    environment:",
-                    f"      SMOKE_PROXY_MODE: {self.mode.value}",
+                    f"      {PROXY_MODE_ENV}: {self.mode.value}",
                 ]
         lines += [
             "  hmm-sidecar:",
@@ -349,9 +327,7 @@ class SmokeRun:
             self.command(
                 *self.compose,
                 "build",
-                ComposeService.SERVER,
-                ComposeService.MITMPROXY,
-                ComposeService.SEED,
+                *BUILT_SERVICES,
                 timeout=BUILD_TIMEOUT_SECONDS,
             )
             self.phase_seconds[SmokePhase.BUILD] = f"{time.monotonic() - started:.1f}"
@@ -367,7 +343,11 @@ class SmokeRun:
             timeout=BOOT_TIMEOUT_SECONDS,
         )
         binding = self.command(
-            *self.compose, "port", ComposeService.INGRESS, "8080", capture=True
+            *self.compose,
+            "port",
+            ComposeService.INGRESS,
+            str(ROUTER_PORT),
+            capture=True,
         ).stdout.strip()
         if not re.fullmatch(r"127\.0\.0\.1:[1-9]\d{0,4}", binding):
             raise RuntimeError(
@@ -375,21 +355,23 @@ class SmokeRun:
             )
         base_url = f"http://{binding}"
         log(f"waiting for {base_url}/health")
-        deadline = time.monotonic() + 120
+        deadline = time.monotonic() + HEALTH_TIMEOUT_SECONDS
         while self.command(
             "curl",
             "--noproxy",
             "*",
             "--max-time",
-            "2",
+            str(HEALTH_POLL_SECONDS),
             "-sf",
             f"{base_url}/health",
             capture=True,
             check=False,
         ).returncode:
             if time.monotonic() >= deadline:
-                raise RuntimeError("router did not become healthy within 120s")
-            time.sleep(2)
+                raise RuntimeError(
+                    f"router did not become healthy within {HEALTH_TIMEOUT_SECONDS}s"
+                )
+            time.sleep(HEALTH_POLL_SECONDS)
         self.phase_seconds[SmokePhase.BOOT] = f"{time.monotonic() - started:.1f}"
         started = time.monotonic()
         seed_output = self.command(
@@ -408,7 +390,7 @@ class SmokeRun:
                 else "0"
             ),
         }
-        for key in ("SMOKE_PIN_MODEL", "SMOKE_OPENAI_PIN_MODEL"):
+        for key in MODEL_OVERRIDE_ENVIRONMENTS:
             if key in os.environ:
                 test_environment[key] = os.environ[key]
         if self.keep and self.directory:
@@ -416,13 +398,7 @@ class SmokeRun:
             test_env.write_text(
                 "\n".join(
                     f"export {key}={shlex.quote(test_environment[key])}"
-                    for key in (
-                        "SMOKE_ROUTER_KEY",
-                        "SMOKE_BASE_URL",
-                        "SMOKE_OPENAI_ENABLED",
-                        "SMOKE_PIN_MODEL",
-                        "SMOKE_OPENAI_PIN_MODEL",
-                    )
+                    for key in CLIENT_ENVIRONMENTS
                     if key in test_environment
                 )
                 + "\n"

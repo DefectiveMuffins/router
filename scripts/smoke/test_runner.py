@@ -18,7 +18,6 @@ import time
 import unittest
 from unittest.mock import patch
 
-
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE_ROOT / "scripts"))
 from agent_checks import (  # noqa: E402 - discovery needs scripts/ on sys.path
@@ -112,9 +111,7 @@ elif "down" in args:
     if failure == FakeFailure.DOWN:
         sys.exit(6)
     (root / project).unlink(missing_ok=True)
-""".replace(
-    "# FAILURE_ENUM", inspect.getsource(FakeFailure)
-)
+""".replace("# FAILURE_ENUM", inspect.getsource(FakeFailure))
 
 
 class SmokeRunnerTest(unittest.TestCase):
@@ -570,6 +567,21 @@ class ComposeMergeTest(unittest.TestCase):
             ).stdout.strip()
             host, port = binding.split(":")
             self.assertEqual(host, "127.0.0.1")
+            # `up -d` only starts the containers; both listeners must become ready.
+            deadline = time.monotonic() + runner.HEALTH_TIMEOUT_SECONDS
+            while True:
+                try:
+                    with socket.create_connection(
+                        (host, int(port)), timeout=1
+                    ) as connection:
+                        connection.sendall(b"ready")
+                        if connection.recv(128) == b"ready":
+                            break
+                except OSError:
+                    pass
+                if time.monotonic() >= deadline:
+                    self.fail("disposable network probe did not become ready")
+                time.sleep(0.1)
             for _ in range(2):
                 with socket.create_connection(
                     (host, int(port)), timeout=5
