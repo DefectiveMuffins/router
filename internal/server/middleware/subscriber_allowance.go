@@ -1,21 +1,14 @@
 package middleware
 
 import (
-	"context"
-	"errors"
-	"log/slog"
 	"net/http"
-	"time"
 
 	"weave-os/router/internal/billing"
 	"weave-os/router/internal/observability"
 	"weave-os/router/internal/proxy"
-	"weave-os/router/internal/router/catalog"
 	"weave-os/router/internal/subscriptions/entitlement"
 
-	"github.com/cenkalti/backoff/v5"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // SubscriptionErrorCode identifies a subscription admission refusal.
@@ -42,6 +35,11 @@ const SubscriptionPlanConflict SubscriptionErrorCode = "subscription_plan_confli
 // balance and spend-limit gates. Allowance read errors fail closed because
 // treating an unreadable meter as exhausted would incorrectly authorize
 // organization spending.
+//
+// Nothing is reserved before dispatch, so a subscriber's concurrent agents
+// never wait on or refuse each other. They can together overrun a window by
+// what they have in flight; settlement books each turn's actual cost, and the
+// next turn after the window is spent moves to organization billing.
 func WithSubscriberAllowance(svc *entitlement.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := observability.FromGin(c)
@@ -88,7 +86,7 @@ func WithSubscriberAllowance(svc *entitlement.Service) gin.HandlerFunc {
 
 		// Boost and unscoped callers serve covering subscriptions first. Max has
 		// already made covering detection return false, so this never skips the
-		// included-allowance hold for PlanMax.
+		// included allowance for PlanMax.
 		if proxy.RequestPresentsCoveringSubscription(c.Request.Context(), c.Request.Header, c.FullPath()) {
 			log.Info("Subscriber request restricted to linked subscription", "reason", billing.SubscriptionOnlyLinkedFirst, "subscriber_id", subscriberID, "admission_outcome", admission.Outcome)
 			c.Request = c.Request.WithContext(billing.WithSubscriptionOnly(c.Request.Context(), billing.SubscriptionOnlyLinkedFirst))
@@ -96,143 +94,13 @@ func WithSubscriberAllowance(svc *entitlement.Service) gin.HandlerFunc {
 			return
 		}
 
-		if admission.Outcome == entitlement.AdmissionExhausted && !admission.HeldCapacityOnly() {
+		if admission.Outcome == entitlement.AdmissionExhausted {
 			c.Next()
 			return
 		}
-		holdRequest(c, log, svc, subscriberID, admission)
-	}
-}
-
-// holdRequest reserves an upper-bound turn cost before the request is
-// dispatched, and returns the hold once it has been served.
-//
-// The admission check above cannot enforce the allowance on its own: it reads
-// the windows, so concurrent turns all see the same headroom and all pass. The
-// reservation accrues and checks in one atomic write, which is what keeps
-// consumed + reserved within the limit. Settlement books the turn's actual
-// cost under its own action identifiers, so releasing the hold afterwards
-// neither refunds nor double-charges the served work.
-func holdRequest(c *gin.Context, log *slog.Logger, svc *entitlement.Service, subscriberID entitlement.SubscriberID, admission entitlement.Admission) {
-	ctx := c.Request.Context()
-	requestID := observability.RequestIDFromContext(ctx)
-	if requestID == "" {
-		// The identifier only has to be unique per delivery for the hold to be
-		// releasable; correlating it with the request's logs is a bonus.
-		requestID = uuid.NewString()
-	}
-
-	retryPolicy := backoff.NewExponentialBackOff()
-	retryPolicy.InitialInterval = 40 * time.Millisecond
-	retryPolicy.MaxInterval = 250 * time.Millisecond
-	firstAttempt := true
-	hold, err := backoff.Retry(ctx, func() (entitlement.Hold, error) {
-		if !firstAttempt {
-			var readErr error
-			admission, readErr = svc.Admit(ctx, subscriberID)
-			if readErr != nil {
-				return entitlement.Hold{}, backoff.Permanent(readErr)
-			}
-		}
-		firstAttempt = false
-		if admission.Outcome == entitlement.AdmissionNotSubscribed ||
-			(admission.Outcome == entitlement.AdmissionExhausted && !admission.HeldCapacityOnly()) {
-			return entitlement.Hold{}, nil
-		}
-		if admission.Outcome == entitlement.AdmissionExhausted {
-			return entitlement.Hold{}, entitlement.ErrAllowanceExhausted
-		}
-		hold := entitlement.Hold{
-			Coverage:            admission.Coverage,
-			ActionID:            requestID + holdActionSuffix,
-			RouterRequestID:     requestID,
-			APIKeyID:            APIKeyFrom(c).ID,
-			RequestedModel:      entitlement.ModelUnresolved,
-			UpperBoundUsdMicros: holdUsdMicros(admission.Usage),
-			CapacitySource:      entitlement.CapacitySourceIncludedRouter,
-		}
-		if _, reserveErr := svc.Reserve(ctx, hold); reserveErr != nil {
-			if errors.Is(reserveErr, entitlement.ErrAllowanceExhausted) {
-				return entitlement.Hold{}, reserveErr
-			}
-			return entitlement.Hold{}, backoff.Permanent(reserveErr)
-		}
-		return hold, nil
-	}, backoff.WithBackOff(retryPolicy), backoff.WithMaxElapsedTime(2*time.Second))
-	if errors.Is(err, entitlement.ErrAllowanceExhausted) {
-		log.Warn("Subscriber allowance temporarily held by concurrent turns", "subscriber_id", subscriberID, "period", admission.ExhaustedPeriod)
-		c.Header("Retry-After", "1")
-		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-			"error":   "subscription_capacity_busy",
-			"message": "Subscription capacity is temporarily reserved by another request. Retry shortly.",
-		})
-		return
-	}
-	if err != nil {
-		if ctx.Err() != nil {
-			c.Abort()
-			return
-		}
-		log.Error("Subscriber allowance reservation failed; refusing request", "err", err, "subscriber_id", subscriberID)
-		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-			"error":   "billing_unavailable",
-			"message": "Billing system is temporarily unavailable. Retry in a few moments.",
-		})
-		return
-	}
-	if admission.Plan != "" {
-		c.Request = c.Request.WithContext(entitlement.WithProductScope(c.Request.Context(), admission.Plan))
-	}
-	if hold.ActionID == "" {
+		c.Request = c.Request.WithContext(entitlement.WithCoverage(c.Request.Context(), admission.Coverage))
 		c.Next()
-		return
 	}
-
-	// Coverage is stamped only once the hold is confirmed: a refused request
-	// must not reach settlement as allowance-covered.
-	hold.Coverage.ProjectedUsdMicros = hold.UpperBoundUsdMicros
-	c.Request = c.Request.WithContext(entitlement.WithCoverage(c.Request.Context(), hold.Coverage))
-
-	c.Next()
-	if entitlement.SettlementFailed(c.Request.Context()) {
-		log.Error("Subscriber allowance hold left standing after settlement failure", "action_id", hold.ActionID)
-		return
-	}
-
-	// The release outlives the request: a client that disconnects mid-turn
-	// cancels ctx, and releasing under it would leave the bound held for the
-	// rest of the window on every abandoned request.
-	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseHoldTimeout)
-	defer cancel()
-	if err := svc.ReleaseHold(releaseCtx, hold.ActionID); err != nil {
-		// The bound stays held until the window turns. That over-counts the
-		// subscriber's usage, which is the safe direction: the alternative is
-		// serving work the allowance may not cover.
-		log.Error("Subscriber allowance hold left standing", "err", err, "action_id", hold.ActionID)
-	}
-}
-
-// holdActionSuffix distinguishes the request-level hold from the per-action
-// identifiers settlement mints for the same request.
-const holdActionSuffix = ":hold"
-
-// releaseHoldTimeout bounds the detached release so a stalled accounting write
-// cannot pin the served request's goroutine.
-const releaseHoldTimeout = 5 * time.Second
-
-// holdUsdMicros bounds one turn's cost, clamped to the headroom the tightest
-// window still has. Clamping to the limit instead would refuse every turn once
-// a window carries any usage, and a subscriber whose remaining allowance is
-// smaller than one worst-case turn could never dispatch at all.
-func holdUsdMicros(usage entitlement.Usage) int64 {
-	bound := catalog.TurnUpperBoundUsdMicros()
-	for _, window := range []entitlement.WindowUsage{usage.SixHour, usage.Weekly, usage.Billing} {
-		headroom := window.LimitUsdMicros - window.ConsumedUsdMicros()
-		if headroom > 0 && headroom < bound {
-			bound = headroom
-		}
-	}
-	return bound
 }
 
 // subscriberAllowanceCovers reports whether subscriber-owned capacity pays for

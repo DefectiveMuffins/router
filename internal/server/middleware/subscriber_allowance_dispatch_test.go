@@ -2,7 +2,6 @@ package middleware_test
 
 import (
 	"bytes"
-	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -39,51 +38,25 @@ func gateServing(
 	return engine
 }
 
-func TestWithSubscriberAllowance_ReleasesHoldAfterTheClientHangsUp(t *testing.T) {
-	// A client that disconnects mid-turn cancels the request context, and a
-	// release issued under it fails — leaving the bound drawn against the
-	// subscriber's window until the window turns over, so every abandoned turn
-	// costs them allowance no work was served on.
-	entitlements := &stubEntitlements{current: activeSubscriberEntitlement(), found: true}
-	allowances := &stubAllowances{}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	engine := gateServing(t, entitlements, allowances, func(c *gin.Context) { cancel() })
-
-	w := httptest.NewRecorder()
-	engine.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/messages", nil).WithContext(ctx))
-
-	require.Len(t, allowances.held, 1)
-	assert.Equal(t, []string{allowances.held[0].ActionID}, allowances.released)
-	assert.NoError(t, allowances.releaseCtxErr, "the release must outlive the request whose bound it returns")
-}
-
 func TestWithSubscriberAllowance_SpentAllowanceServesSubscriptionOnly(t *testing.T) {
 	// The turn continues on the caller's own plan, so routing has to be held to
 	// it the way the balance and spend-cap gates hold theirs: an unmarked turn
 	// is free to fall back onto paid capacity, which is the spend a spent
 	// allowance refuses.
-	for name, allowances := range map[string]*stubAllowances{
-		"window read as spent": {billingConsumed: monthlyAllowance},
-		"reservation refused":  {exhausted: entitlement.PeriodKindSixHour},
-	} {
-		t.Run(name, func(t *testing.T) {
-			entitlements := &stubEntitlements{current: activeSubscriberEntitlement(), found: true}
-			subscriptionOnly := false
-			engine := gateServing(t, entitlements, allowances, func(c *gin.Context) {
-				subscriptionOnly = billing.SubscriptionOnlyFromContext(c.Request.Context())
-			})
+	entitlements := &stubEntitlements{current: activeSubscriberEntitlement(), found: true}
+	allowances := &stubAllowances{billingConsumed: monthlyAllowance}
+	subscriptionOnly := false
+	engine := gateServing(t, entitlements, allowances, func(c *gin.Context) {
+		subscriptionOnly = billing.SubscriptionOnlyFromContext(c.Request.Context())
+	})
 
-			w := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-			req.Header.Set("Authorization", "Bearer sk-ant-oat-abc123")
-			engine.ServeHTTP(w, req)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	req.Header.Set("Authorization", "Bearer sk-ant-oat-abc123")
+	engine.ServeHTTP(w, req)
 
-			assert.Equal(t, http.StatusOK, w.Code)
-			assert.True(t, subscriptionOnly)
-		})
-	}
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, subscriptionOnly)
 }
 
 func TestWithSubscriberAllowance_CoveringSubscriptionIsLinkedFirstNotDepleted(t *testing.T) {
@@ -111,7 +84,6 @@ func TestWithSubscriberAllowance_CoveringSubscriptionIsLinkedFirstNotDepleted(t 
 	assert.Equal(t, http.StatusOK, w.Code)
 	require.True(t, flagged, "a covering subscription must still pin the turn to the caller's own plan")
 	assert.Equal(t, billing.SubscriptionOnlyLinkedFirst, reason)
-	assert.Empty(t, allowances.held, "linked-first funding must not draw the included allowance")
 	assert.Contains(t, logs.String(), "Subscriber request restricted to linked subscription")
 	assert.Contains(t, logs.String(), "reason=linked_first")
 	assert.Contains(t, logs.String(), "subscriber_id="+allowanceSubscriberID)
@@ -122,8 +94,10 @@ func TestWithSubscriberAllowance_MaxCoveringSubscriptionIsNotSubscriptionOnly(t 
 	entitlements := &stubEntitlements{current: maxSubscriberEntitlement(), found: true}
 	allowances := &stubAllowances{}
 	var subscriptionOnly bool
+	var coverage entitlement.Coverage
 	engine := gateServing(t, entitlements, allowances, func(c *gin.Context) {
 		subscriptionOnly = billing.SubscriptionOnlyFromContext(c.Request.Context())
+		coverage, _ = entitlement.CoverageFromContext(c.Request.Context())
 	})
 
 	w := httptest.NewRecorder()
@@ -133,5 +107,5 @@ func TestWithSubscriberAllowance_MaxCoveringSubscriptionIsNotSubscriptionOnly(t 
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.False(t, subscriptionOnly)
-	require.Len(t, allowances.held, 1)
+	assert.Equal(t, entitlement.SubscriberID(allowanceSubscriberID), coverage.SubscriberID)
 }

@@ -45,7 +45,7 @@ func NextActionID(ctx context.Context, routerRequestID string) (string, bool) {
 	return fmt.Sprintf("%s:%d", routerRequestID, binding.actions.Add(1)), true
 }
 
-// MarkSettlementFailed preserves the request hold for reconciliation.
+// MarkSettlementFailed records that a served action failed to settle.
 func MarkSettlementFailed(ctx context.Context) {
 	if binding, ok := ctx.Value(coverageContextKey{}).(*coverageBinding); ok {
 		binding.failed.Store(true)

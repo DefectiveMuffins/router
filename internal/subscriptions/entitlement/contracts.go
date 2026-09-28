@@ -20,28 +20,16 @@ var (
 	ErrAllowanceActionNotFound = errors.New("subscriber allowance action not found")
 	// ErrAllowanceActionConflict means a settlement command contradicts the stored action.
 	ErrAllowanceActionConflict = errors.New("conflicting subscriber allowance action")
-	// ErrAllowanceExhausted means a pre-dispatch reservation was refused
-	// because the window it would accrue against has no headroom left.
-	ErrAllowanceExhausted = errors.New("subscriber allowance exhausted")
 	// ErrAllowanceHeldUnsettled means a settlement failed after its hold was
 	// durably recorded. The windows already count the turn's cost, so a caller
 	// falling back to another book must not charge it a second time.
 	ErrAllowanceHeldUnsettled = errors.New("subscriber allowance hold left unsettled")
 )
 
-// ExhaustedError names the enforcement window that refused a reservation, so
-// a caller can tell a spent six-hour window (retry after the window turns)
-// from a spent week or billing month (retry after the week turns, or after
-// renewal or a top-up).
-type ExhaustedError struct {
-	Period PeriodKind
-}
-
-func (e ExhaustedError) Error() string {
-	return "subscriber allowance exhausted: " + string(e.Period) + " window"
-}
-
-func (e ExhaustedError) Unwrap() error { return ErrAllowanceExhausted }
+// ModelUnresolved records that a hold was filed before routing chose a model.
+// Settlement names the served model on its own actions, so the hold does not
+// need to guess one.
+const ModelUnresolved = "unresolved"
 
 // SubscriberID is the opaque credential-subject identity authenticated by Router.
 type SubscriberID string
@@ -240,7 +228,7 @@ type Usage struct {
 type ActionState string
 
 const (
-	// ActionStateReserved means an upper-bound retail cost is held.
+	// ActionStateReserved means a retail cost is held but not yet settled.
 	ActionStateReserved ActionState = "reserved"
 	// ActionStateFinalized means actual catalog-derived retail cost is recorded.
 	ActionStateFinalized ActionState = "finalized"
@@ -253,7 +241,7 @@ func (s ActionState) Valid() bool {
 	return s == ActionStateReserved || s == ActionStateFinalized || s == ActionStateReleased
 }
 
-// Reservation requests an idempotent upper-bound allowance hold.
+// Reservation requests an idempotent allowance hold.
 type Reservation struct {
 	ActionID           string
 	RouterRequestID    string
@@ -385,11 +373,6 @@ type EntitlementRepository interface {
 // AllowanceRepository stores idempotent reservation, finalization, and release actions.
 type AllowanceRepository interface {
 	Reserve(context.Context, Reservation) (Action, error)
-	// ReserveWithinLimits holds a reservation only while every enforcement
-	// window can still pay for it, and returns ExhaustedError naming the
-	// window that refused otherwise. The hold and the window accruals are one
-	// atomic unit: a refused window leaves no action and no partial draw-down.
-	ReserveWithinLimits(context.Context, Reservation) (Action, error)
 	Finalize(context.Context, Finalization) (Action, error)
 	Release(context.Context, Release) (Action, error)
 	Usage(ctx context.Context, subscriberID SubscriberID, billing, weekly, sixHour Period) (Usage, error)

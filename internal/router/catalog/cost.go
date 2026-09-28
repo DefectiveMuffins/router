@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"math"
-	"sync"
 
 	"weave-os/router/internal/providers"
 )
@@ -50,43 +49,6 @@ func USDToMicros(f float64) int64 {
 	}
 	return int64(math.Round(f * 1_000_000))
 }
-
-// upperBoundOutputTokens caps the completion half of a worst-case turn.
-// A turn's input is bounded by the model's context window, but its output is
-// only bounded by the client's max_tokens, which is not known before dispatch,
-// so the bound is the highest output cap any deployed model accepts (Grok and
-// Muse clamp at 131072; the gpt-5.x family at 128000).
-const upperBoundOutputTokens = 131_072
-
-// TurnUpperBoundUsdMicros is the most a single turn can retail for across the
-// catalog: the priciest model's whole context window billed as fresh input,
-// plus a full completion.
-//
-// Allowance reservations need a bound that holds before the model is chosen
-// and before any token is counted. Using an expected cost instead would let
-// concurrent turns each pass a check only the first of them can afford, which
-// is the overrun the reservation exists to close; the bound is returned to the
-// windows at finalization, so over-reserving costs headroom only while the
-// turn is in flight.
-var TurnUpperBoundUsdMicros = sync.OnceValue(func() int64 {
-	var worst float64
-	for _, m := range Models {
-		price, ok := PrimaryPriceFor(m.ID)
-		if !ok {
-			continue
-		}
-		inputTokens := m.ContextWindow
-		if inputTokens <= 0 {
-			inputTokens = DefaultContextWindow
-		}
-		cost := EffectiveInputCost(inputTokens, 0, 0, price, providers.ProviderAnthropic) +
-			EffectiveOutputCost(inputTokens, upperBoundOutputTokens, price)
-		if cost > worst {
-			worst = cost
-		}
-	}
-	return USDToMicros(worst)
-})
 
 // SignedUSDToMicros is USDToMicros without the negative clamp; planner EV terms are signed.
 // NaN/Inf still collapse to 0 so non-finite values cannot persist as BIGINT garbage.
