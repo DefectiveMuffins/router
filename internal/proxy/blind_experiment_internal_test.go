@@ -137,6 +137,42 @@ func TestCallerModelPassthroughUsesGatewayAlias(t *testing.T) {
 	assert.Equal(t, blindExperimentPublicDecisionReason, decision.Reason)
 }
 
+func TestCallerModelPassthroughRejectsUnknownModelWithoutBlamingProviderKeys(t *testing.T) {
+	service := NewService(nil, nil, nil, false, nil, nil, false,
+		providers.ProviderAnthropic, "claude-haiku-4-5", nil)
+
+	_, _, err := service.blindExperimentPassthroughDecision(
+		blindExperimentContext(auth.BlindExperimentArmPassthrough),
+		router.Request{
+			RequestedModel:   "auto",
+			EnabledProviders: map[string]struct{}{providers.ProviderOpenAI: {}},
+		},
+	)
+
+	var unknown *PassthroughModelUnknownError
+	require.ErrorAs(t, err, &unknown)
+	assert.Equal(t, "auto", unknown.Model)
+	assert.NotErrorIs(t, err, cluster.ErrNoEligibleProvider,
+		"a routing placeholder must not surface as the missing-provider-keys error")
+}
+
+func TestCallerModelPassthroughResolvesDatedAlias(t *testing.T) {
+	service := NewService(nil, nil, nil, false, nil, nil, false,
+		providers.ProviderAnthropic, "claude-haiku-4-5", nil)
+
+	decision, _, err := service.blindExperimentPassthroughDecision(
+		blindExperimentContext(auth.BlindExperimentArmPassthrough),
+		router.Request{
+			RequestedModel:   "claude-haiku-4-5-20251001",
+			EnabledProviders: map[string]struct{}{providers.ProviderAnthropic: {}},
+		},
+	)
+
+	require.NoError(t, err, "a dated catalog alias is a known model and must still pass through")
+	assert.Equal(t, providers.ProviderAnthropic, decision.Provider)
+	assert.Equal(t, "claude-haiku-4-5-20251001", decision.Model)
+}
+
 func TestCallerModelPassthroughHonorsExcludedModels(t *testing.T) {
 	routerSpy := &blindExperimentRouterSpy{err: errors.New("scorer must not run")}
 	service := NewService(routerSpy, nil, nil, false, nil, nil, false,

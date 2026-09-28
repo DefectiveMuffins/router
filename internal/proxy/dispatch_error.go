@@ -53,6 +53,7 @@ const (
 	DispatchErrorAnthropicCacheControlInvalid
 	DispatchErrorForcedModelExcluded
 	DispatchErrorForcedModelUnknown
+	DispatchErrorPassthroughModelUnknown
 	DispatchErrorForcedClusterUnsupportedStrategy
 	DispatchErrorForcedClusterUnservable
 	DispatchErrorRoutedModelIncompatible
@@ -101,6 +102,7 @@ func ClassifyDispatchError(err error) (DispatchErrorClass, bool) {
 	var bufferedErr *providers.UpstreamErrorResponse
 	var forcedExcluded *ForcedModelExcludedError
 	var forcedUnknown *ForcedModelUnknownError
+	var passthroughUnknown *PassthroughModelUnknownError
 	var forcedClusterStrategy *ForcedClusterUnsupportedStrategyError
 	var forcedClusterUnservable *policy.ForcedClusterUnservableError
 	var resolution *policy.ResolutionError
@@ -160,6 +162,14 @@ func ClassifyDispatchError(err error) (DispatchErrorClass, bool) {
 			Message:    forcedUnknown.Error() + ". Use a full model ID, e.g. claude-opus-5, gpt-5.6-sol, or gemini-3-pro-preview.",
 			LogLevel:   "warn",
 			LogMessage: "Rejected request: forced model is not a known model",
+		}, true
+	case errors.As(err, &passthroughUnknown):
+		return DispatchErrorClass{
+			Kind:       DispatchErrorPassthroughModelUnknown,
+			Status:     http.StatusBadRequest,
+			Message:    "Automatic routing is off for your organization, so the requested model is served as-is, but " + passthroughUnknown.Error() + ". Request a full model ID (e.g. claude-opus-5-5 or gpt-5.6-sol), or ask your org admin to turn automatic routing back on.",
+			LogLevel:   "warn",
+			LogMessage: "Rejected request: passthrough requested model is not a known model",
 		}, true
 	case errors.As(err, &forcedClusterStrategy):
 		return DispatchErrorClass{
@@ -447,7 +457,7 @@ func (k DispatchErrorKind) IsClientError() bool {
 	switch k {
 	case DispatchErrorClassifierHistory, DispatchErrorClassifierInputTooLong:
 		return true
-	case DispatchErrorRequestNotJSONObject, DispatchErrorResponsesChatCompletionsBody, DispatchErrorNoEligibleProvider, DispatchErrorAllowlistEmptiesPool, DispatchErrorContextWindowExceeded, DispatchErrorInvalidRoutingKnobs, DispatchErrorTranslationIntrinsicallyIncompatible, DispatchErrorAnthropicCacheControlInvalid, DispatchErrorForcedModelExcluded, DispatchErrorForcedModelUnknown, DispatchErrorForcedClusterUnsupportedStrategy, DispatchErrorForcedClusterUnservable, DispatchErrorGatewayServesNoModel, DispatchErrorNoRoutableModels, DispatchErrorPlanOverrideRejected, DispatchErrorProductIneligible:
+	case DispatchErrorRequestNotJSONObject, DispatchErrorResponsesChatCompletionsBody, DispatchErrorNoEligibleProvider, DispatchErrorAllowlistEmptiesPool, DispatchErrorContextWindowExceeded, DispatchErrorInvalidRoutingKnobs, DispatchErrorTranslationIntrinsicallyIncompatible, DispatchErrorAnthropicCacheControlInvalid, DispatchErrorForcedModelExcluded, DispatchErrorForcedModelUnknown, DispatchErrorPassthroughModelUnknown, DispatchErrorForcedClusterUnsupportedStrategy, DispatchErrorForcedClusterUnservable, DispatchErrorGatewayServesNoModel, DispatchErrorNoRoutableModels, DispatchErrorPlanOverrideRejected, DispatchErrorProductIneligible:
 		return true
 	default:
 		return false

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"weave-os/router/internal/auth"
@@ -12,6 +13,25 @@ import (
 )
 
 const blindExperimentPublicDecisionReason = "cluster_argmax"
+
+// ErrPassthroughModelUnknown is returned when passthrough must serve the
+// requested model verbatim but it names no catalog model (e.g. a harness's
+// "auto" placeholder), so it isn't misreported as missing provider keys.
+var ErrPassthroughModelUnknown = errors.New("passthrough requested model is not a known model")
+
+// PassthroughModelUnknownError carries the unresolvable value so the
+// dispatch classifier can quote it back.
+type PassthroughModelUnknownError struct {
+	Model string
+}
+
+// Error implements error.
+func (e *PassthroughModelUnknownError) Error() string {
+	return fmt.Sprintf("%q is not a known model", e.Model)
+}
+
+// Unwrap ties the typed error to ErrPassthroughModelUnknown for errors.Is.
+func (e *PassthroughModelUnknownError) Unwrap() error { return ErrPassthroughModelUnknown }
 
 func blindExperimentPassthroughActive(ctx context.Context) bool {
 	state, active := auth.BlindExperimentFrom(ctx)
@@ -64,13 +84,17 @@ func (s *Service) callerModelPassthroughDecision(ctx context.Context, req router
 		}, nil
 	}
 
+	model, found := catalog.ByID(req.RequestedModel)
+	if !found {
+		return router.Decision{}, &PassthroughModelUnknownError{Model: req.RequestedModel}
+	}
+
 	availableProviders := req.EnabledProviders
 	if availableProviders == nil {
 		availableProviders = s.deploymentKeyedProviders
 	}
 	if availableProviders == nil {
-		model, found := catalog.ByID(req.RequestedModel)
-		if !found || model.PrimaryProvider() == "" {
+		if model.PrimaryProvider() == "" {
 			return router.Decision{}, fmt.Errorf("requested model %q has no available provider: %w", req.RequestedModel, cluster.ErrNoEligibleProvider)
 		}
 		return router.Decision{
