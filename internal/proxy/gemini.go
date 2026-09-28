@@ -405,6 +405,11 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 	var subscriberTelemetry *InsertTelemetryParams
 	if installationID != uuid.Nil {
 		credentialKeyPrefix, credentialKeySuffix, credentialSource := s.credentialKeyParts(ctx)
+		// Gemini reports its output cap as a flag rather than a stop reason.
+		errorClass := classifyTurnError(proxyErr, "", 0)
+		if errorClass == "" && extractor.OutputLimitReached() {
+			errorClass = TurnErrorMaxTokens
+		}
 		telemetryParams := InsertTelemetryParams{
 			InstallationID:         installationID.String(),
 			APIKeyID:               apiKeyIDFromContext(ctx),
@@ -464,7 +469,7 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 			FreshCandidateScores:   geminiObs.FreshCandidateScores,
 			PinAgeSec:              int64PtrIf(stickyHit && pinAgeSec > 0, pinAgeSec),
 			ToolResultBytes:        toolResultBytesPtr(inboundLastUser, tt),
-			ErrorClass:             classifyTurnError(proxyErr, "", 0),
+			ErrorClass:             errorClass,
 			CredentialKeyPrefix:    credentialKeyPrefix,
 			CredentialKeySuffix:    credentialKeySuffix,
 			CredentialSource:       credentialSource,

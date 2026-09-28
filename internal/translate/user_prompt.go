@@ -8,9 +8,10 @@ import (
 
 // EndsWithUserPrompt reports whether the trailing conversational turn is text
 // a person typed: a user message with visible text that answers no tool call.
-// Out-of-band role:"system" notices are skipped, and leading injected tag
-// blocks (<system-reminder>, <command-name>) are not visible text, so harness
-// follow-ups that only carry those do not count. Anthropic/OpenAI shapes only.
+// Out-of-band role:"system" notices are skipped, and the wrapper blocks Claude
+// Code injects (<system-reminder>, <command-name>, ...) are not visible text,
+// so harness follow-ups that only carry those do not count. Any other tagged
+// text is the person's own. Anthropic/OpenAI shapes only.
 func (e *RequestEnvelope) EndsWithUserPrompt() bool {
 	switch e.format {
 	case FormatAnthropic, FormatOpenAI:
@@ -30,7 +31,7 @@ func (e *RequestEnvelope) EndsWithUserPrompt() bool {
 			if answersToolCall {
 				return false
 			}
-			if strings.TrimSpace(text[leadingInjectedPrefixEnd(text):]) != "" {
+			if !isOnlyKnownInjectedText(text) {
 				sawTypedText = true
 			}
 		case "tool":

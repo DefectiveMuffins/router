@@ -528,6 +528,9 @@ func (s *Service) bypassToAnthropic(
 	// (usage_bypass / classifier_subscription_passthrough) marks the lane. Required for Phase 0 unified_limit_headers capture.
 	if installationID := installationIDFromContext(ctx); installationID != uuid.Nil {
 		credentialKeyPrefix, credentialKeySuffix, credSource := s.credentialKeyParts(ctx)
+		stopReason, _, _ := extractor.AnthropicResponse()
+		// The routed path's key, so a session switching lanes keeps one turn clock.
+		sessionKey := deriveSessionKeyForRequest(ctx, env, apiKeyIDFromContext(ctx))
 		telemetryParams := InsertTelemetryParams{
 			InstallationID:         installationID.String(),
 			APIKeyID:               apiKeyIDFromContext(ctx),
@@ -550,7 +553,8 @@ func (s *Service) bypassToAnthropic(
 			UpstreamLatencyMs:      time.Since(proxyStart).Milliseconds(),
 			TotalLatencyMs:         time.Since(requestStart).Milliseconds(),
 			UpstreamStatusCode:     int32(upstreamStatus(proxyErr)),
-			ErrorClass:             classifyTurnError(proxyErr, "", 0),
+			ErrorClass:             classifyTurnError(proxyErr, stopReason, 0),
+			SessionKey:             sessionKey[:],
 			CaptureMode:            s.effectiveCaptureMode(ctx).String(),
 			TurnType:               string(turnType),
 			CacheCreationTokens:    cacheTokenPtr(cacheCreation),

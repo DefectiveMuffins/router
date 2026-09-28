@@ -37,11 +37,16 @@ func (s *Service) WithSessionTurnClock(clock SessionTurnClock) *Service {
 	return s
 }
 
+// sessionTurnClockTimeout bounds the clock advance so the telemetry insert that
+// follows it in the same fireTelemetry budget always keeps time to run.
+const sessionTurnClockTimeout = time.Second
+
 // advancesSessionTurnClock reports whether a row is a main-thread response:
 // the only turns a person reads before typing. Classifier, title, probe,
-// recap, compaction, and sub-agent calls run beside the conversation.
+// recap, compaction, and sub-agent calls run beside the conversation, and a
+// turn that failed before producing output left nothing to read.
 func advancesSessionTurnClock(p InsertTelemetryParams) bool {
-	if p.SpanType != "router.upstream" || len(p.SessionKey) == 0 || p.DecisionModel == "" {
+	if p.SpanType != "router.upstream" || len(p.SessionKey) == 0 || p.DecisionModel == "" || p.OutputTokens <= 0 {
 		return false
 	}
 	return p.TurnType == string(turntype.MainLoop) || p.TurnType == string(turntype.ToolResult)
@@ -54,7 +59,9 @@ func (s *Service) applyUserPromptGap(ctx context.Context, log *slog.Logger, p *I
 	if s.turnClock == nil || !advancesSessionTurnClock(*p) {
 		return
 	}
-	previous, found, err := s.turnClock.AdvanceSessionTurnClock(ctx, SessionTurnClockAdvance{
+	clockCtx, cancel := context.WithTimeout(ctx, sessionTurnClockTimeout)
+	defer cancel()
+	previous, found, err := s.turnClock.AdvanceSessionTurnClock(clockCtx, SessionTurnClockAdvance{
 		InstallationID:  p.InstallationID,
 		SessionKey:      p.SessionKey,
 		ResponseEndedAt: p.Timestamp.Add(time.Duration(p.TotalLatencyMs) * time.Millisecond),

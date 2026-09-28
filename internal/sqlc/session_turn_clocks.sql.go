@@ -103,6 +103,20 @@ func (q *Queries) AdvanceSessionTurnClock(ctx context.Context, arg AdvanceSessio
 	return i, err
 }
 
+const lockSessionTurnClock = `-- name: LockSessionTurnClock :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
+`
+
+// Serializes one session's clock advances, including its first. Run it in the
+// advance's transaction: the advance's snapshot is taken after the lock, so it
+// sees a racing advance that committed first. Hash collisions only over-serialize.
+//
+//	SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
+func (q *Queries) LockSessionTurnClock(ctx context.Context, sessionLockKey string) error {
+	_, err := q.db.Exec(ctx, lockSessionTurnClock, sessionLockKey)
+	return err
+}
+
 const sweepStaleSessionTurnClocks = `-- name: SweepStaleSessionTurnClocks :exec
 DELETE FROM router.session_turn_clocks
 WHERE updated_at < now() - interval '7 days'

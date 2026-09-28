@@ -383,6 +383,10 @@ func TestEndsWithUserPrompt(t *testing.T) {
 		map[string]any{"type": "text", "text": "<system-reminder>The task list changed.</system-reminder>"},
 	}}
 	systemNotice := map[string]any{"role": "system", "content": "Deferred tools are now available."}
+	typedTagged := map[string]any{"role": "user", "content": "<b>check this</b>"}
+	reminderThenTypedTagged := map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "text", "text": "<system-reminder>The task list changed.</system-reminder>\n<note>fix the flaky test</note>"},
+	}}
 
 	cases := []struct {
 		name     string
@@ -396,6 +400,8 @@ func TestEndsWithUserPrompt(t *testing.T) {
 		{"tool result behind a trailing system notice", []any{typed, toolUse, toolResult, systemNotice}, false},
 		{"text split from the tool result into its own message", []any{typed, toolUse, toolResult, typed}, false},
 		{"injected reminder with no typed text", []any{typed, reply, reminderOnly}, false},
+		{"tagged text the person typed", []any{typed, reply, typedTagged}, true},
+		{"tagged text typed behind an injected reminder", []any{typed, reply, reminderThenTypedTagged}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

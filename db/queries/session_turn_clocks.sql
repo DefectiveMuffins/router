@@ -1,3 +1,9 @@
+-- Serializes one session's clock advances, including its first. Run it in the
+-- advance's transaction: the advance's snapshot is taken after the lock, so it
+-- sees a racing advance that committed first. Hash collisions only over-serialize.
+-- name: LockSessionTurnClock :exec
+SELECT pg_advisory_xact_lock(hashtextextended(@session_lock_key::text, 0));
+
 -- Records that a session's main thread finished a response and returns the
 -- finish recorded before it, so the caller can time the next typed prompt.
 -- Racing completions keep the latest finish. Every CTE reads the same

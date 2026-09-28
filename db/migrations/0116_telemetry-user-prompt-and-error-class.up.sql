@@ -16,4 +16,7 @@ CREATE TABLE router.session_turn_clocks (
     PRIMARY KEY (installation_id, session_key)
 );
 
+-- The hourly expiry sweep filters on updated_at alone.
+CREATE INDEX session_turn_clocks_updated_at_idx ON router.session_turn_clocks (updated_at);
+
 COMMIT;
