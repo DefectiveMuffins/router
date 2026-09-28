@@ -95,7 +95,7 @@ func (capture *jsonlTrafficCapture) Close() error {
 func redactCaptureHeaders(headers map[string][]string) map[string][]string {
 	redacted := make(map[string][]string, len(headers))
 	for name, values := range headers {
-		if isSensitiveCaptureHeader(name) {
+		if !isSafeCaptureHeader(name) {
 			redacted[name] = []string{"[REDACTED]"}
 			continue
 		}
@@ -104,13 +104,9 @@ func redactCaptureHeaders(headers map[string][]string) map[string][]string {
 	return redacted
 }
 
-func isSensitiveCaptureHeader(name string) bool {
-	name = strings.ToLower(name)
-	if strings.Contains(name, "api-key") || strings.HasSuffix(name, "-token") {
-		return true
-	}
-	switch name {
-	case "authorization", "proxy-authorization", "api-key", "token", "cookie", "set-cookie", "x-weave-router-key", "x-weave-user-email":
+func isSafeCaptureHeader(name string) bool {
+	switch strings.ToLower(name) {
+	case "accept", "accept-encoding", "anthropic-beta", "anthropic-version", "content-encoding", "content-length", "content-type", "openai-beta", "transfer-encoding", "user-agent", "x-goog-api-client":
 		return true
 	default:
 		return false

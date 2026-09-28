@@ -114,3 +114,26 @@ func TestWithTrafficCaptureDoesNotReadRequestBeforeHandler(t *testing.T) {
 		t.Fatalf("unread request was incorrectly reported complete: %#v", exchange)
 	}
 }
+
+func TestWithTrafficCaptureRecordsRecoveredHandlerPanic(t *testing.T) {
+	recorder := &exchangeRecorder{}
+	engine := gin.New()
+	engine.Use(middleware.WithTrafficCapture(recorder), gin.Recovery())
+	engine.POST("/v1/messages", func(*gin.Context) {
+		panic("synthetic handler failure")
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"prompt":"synthetic"}`))
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("response status = %d, want %d", response.Code, http.StatusInternalServerError)
+	}
+	if len(recorder.exchanges) != 1 {
+		t.Fatalf("captured exchanges = %d, want 1", len(recorder.exchanges))
+	}
+	if recorder.exchanges[0].Response == nil || recorder.exchanges[0].Response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("captured panic response = %#v", recorder.exchanges[0].Response)
+	}
+}

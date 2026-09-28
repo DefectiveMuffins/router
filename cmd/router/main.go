@@ -1463,7 +1463,6 @@ func main() {
 		apm.Middleware(),
 		observability.Middleware(),
 		observability.AccessLog(),
-		gin.Recovery(),
 	)
 
 	// Lets the admin model-selection handler surface deployed models; nil
@@ -1494,7 +1493,15 @@ func main() {
 			WithSubscriberAllowance(subscriberAllowanceSvc)
 		logger.Info("Individual subscriber allowance enforcement enabled")
 	}
-	server.RegisterWithFeatures(engine, authSvc, proxySvc, deployedModels, hmmRosterModels, deploymentMode, billingSvc, readinessChecker, hmmRosterSources, analyticsSvc, server.Features{PolicyPinEnabled: policyPinEnabled, ServingAdmission: servingAdmission, SubscriberAllowance: subscriberAllowanceSvc, TrafficCapture: trafficCapture})
+	serverFeatures := server.Features{
+		PolicyPinEnabled:    policyPinEnabled,
+		ServingAdmission:    servingAdmission,
+		SubscriberAllowance: subscriberAllowanceSvc,
+	}
+	if trafficCapture != nil {
+		serverFeatures.TrafficCapture = trafficCapture
+	}
+	server.RegisterWithFeatures(engine, authSvc, proxySvc, deployedModels, hmmRosterModels, deploymentMode, billingSvc, readinessChecker, hmmRosterSources, analyticsSvc, serverFeatures)
 
 	port := config.GetOr("PORT", "8080")
 	address := ":" + port

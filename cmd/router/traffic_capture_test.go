@@ -123,10 +123,18 @@ func TestTrafficCaptureWriterRedactsHeadersAndPreservesBodies(t *testing.T) {
 		Request: trafficcapture.Request{
 			Header: map[string][]string{
 				"Authorization":      {"Bearer secret"},
+				"X-Client-Secret":    {"opaque credential"},
 				"X-Weave-User-Email": {"agent@example.com"},
 				"Content-Type":       {"application/json"},
 			},
 			Body: []byte(`{"prompt":"synthetic"}`),
+		},
+		Response: &trafficcapture.Response{
+			Header: map[string][]string{
+				"Content-Type":    {"application/json"},
+				"X-Session-Id":    {"private session"},
+				"X-Client-Secret": {"opaque response credential"},
+			},
 		},
 	}
 	if err := capture.Record(exchange); err != nil {
@@ -144,11 +152,18 @@ func TestTrafficCaptureWriterRedactsHeadersAndPreservesBodies(t *testing.T) {
 	if err := json.Unmarshal(fileBytes, &saved); err != nil {
 		t.Fatal(err)
 	}
-	if saved.Request.Header["Authorization"][0] != "[REDACTED]" || saved.Request.Header["X-Weave-User-Email"][0] != "[REDACTED]" {
+	if saved.Request.Header["Authorization"][0] != "[REDACTED]" ||
+		saved.Request.Header["X-Client-Secret"][0] != "[REDACTED]" ||
+		saved.Request.Header["X-Weave-User-Email"][0] != "[REDACTED]" {
 		t.Fatalf("sensitive headers were not redacted: %#v", saved.Request.Header)
 	}
 	if saved.Request.Header["Content-Type"][0] != "application/json" || string(saved.Request.Body) != `{"prompt":"synthetic"}` {
 		t.Fatalf("non-sensitive HTTP data changed: %#v", saved.Request)
+	}
+	if saved.Response == nil || saved.Response.Header["Content-Type"][0] != "application/json" ||
+		saved.Response.Header["X-Session-Id"][0] != "[REDACTED]" ||
+		saved.Response.Header["X-Client-Secret"][0] != "[REDACTED]" {
+		t.Fatalf("unsafe response headers were not redacted: %#v", saved.Response)
 	}
 	fileInfo, err := os.Stat(capturePath)
 	if err != nil {

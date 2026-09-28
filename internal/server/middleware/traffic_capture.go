@@ -141,7 +141,8 @@ type trafficCaptureResponseWriter struct {
 }
 
 func (w *trafficCaptureResponseWriter) Write(body []byte) (int, error) {
-	written, err := w.ResponseWriter.Write(body)
+	// Conversation endpoints return protocol JSON or SSE; escaping would corrupt their wire format.
+	written, err := w.ResponseWriter.Write(body) // codeql[go/reflected-xss]
 	if written > 0 {
 		_, _ = w.body.Write(body[:written])
 	}

@@ -46,7 +46,7 @@ func TestNewClientCapturesUpstreamRequestAndStreamedResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Header.Set("X-Test", "visible")
+	request.Header.Set("Accept", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestNewClientCapturesUpstreamRequestAndStreamedResponse(t *testing.T) {
 	if exchange.Direction != trafficcapture.DirectionUpstream || exchange.ParentID != "inbound-1" || exchange.Attempt != 1 || !exchange.Complete {
 		t.Fatalf("captured upstream metadata = %#v", exchange)
 	}
-	if !bytes.Equal(exchange.Request.Body, requestPayload) || exchange.Request.Header["X-Test"][0] != "visible" {
+	if !bytes.Equal(exchange.Request.Body, requestPayload) || exchange.Request.Header["Accept"][0] != "application/json" {
 		t.Fatalf("captured provider request = %#v", exchange.Request)
 	}
 	if exchange.Response == nil || exchange.Response.StatusCode != http.StatusOK || !bytes.Equal(exchange.Response.Body, responsePayload) {
