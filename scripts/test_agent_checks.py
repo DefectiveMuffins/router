@@ -42,6 +42,37 @@ def fixture_git(root: Path, *arguments: str) -> str:
 
 
 class AgentChecksTest(unittest.TestCase):
+    def test_ui_types_require_frontend_validation(self):
+        self.assertIn(
+            CHECKS.SuiteID.FRONTEND,
+            {
+                suite.id
+                for suite in CHECKS.select_suites(["assets/ui/types/fixture.ts"])
+            },
+        )
+
+    def test_install_requires_separate_cli_receipt(self):
+        selected = {suite.id for suite in CHECKS.select_suites(["install/install.sh"])}
+        self.assertIn(CHECKS.SuiteID.INSTALL, selected)
+        self.assertIn(CHECKS.SuiteID.INSTALL_CLI, selected)
+        suite = next(
+            suite for suite in CHECKS.SUITES if suite.id == CHECKS.SuiteID.INSTALL_CLI
+        )
+        with patch.object(CHECKS.shutil, "which", return_value=None):
+            receipt = CHECKS.run_suite(Path.cwd(), suite, True)
+        self.assertEqual(CHECKS.Outcome.BLOCKED, receipt["outcome"])
+        with patch.object(
+            CHECKS.shutil, "which", return_value="available"
+        ), patch.object(
+            CHECKS.subprocess, "run", return_value=subprocess.CompletedProcess([], 42)
+        ):
+            receipt = CHECKS.run_suite(Path.cwd(), suite, True)
+        self.assertEqual(CHECKS.Outcome.FAILED, receipt["outcome"])
+        self.assertEqual(
+            "install/pi-router/test/opencode_smoke.sh",
+            receipt["commands"][0]["argv"][-1],
+        )
+
     def test_new_execution_boundaries_require_smoke(self):
         for path in (
             "internal/dispatch/executor.go",
@@ -194,6 +225,8 @@ class AgentChecksTest(unittest.TestCase):
             "ANTHROPIC_API_KEY": "synthetic-provider-secret",
             "GOOGLE_API_KEY": "synthetic-provider-secret",
             "OPENAI_API_KEY": "synthetic-provider-secret",
+            "OPENCODE_BIN": "/synthetic/private/opencode",
+            "OPENCODE_EXPECTED_VERSION": "0.0.0",
             "GH_TOKEN": "synthetic-source-control-secret",
             "AWS_SECRET_ACCESS_KEY": "synthetic-cloud-secret",
             "GOOGLE_APPLICATION_CREDENTIALS": "/synthetic/private/cloud.json",

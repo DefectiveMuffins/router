@@ -21,6 +21,7 @@ class SuiteID(StrEnum):
     GO = "go"
     LINT = "lint"
     INSTALL = "install"
+    INSTALL_CLI = "install-cli"
     HMM = "hmm"
     FRONTEND = "frontend"
     DATABASE = "database"
@@ -78,6 +79,7 @@ SMOKE_PATHS = (
     "Makefile",
     ".github/workflows/*",
 )
+INSTALL_PATHS = ("install/*", "internal/router/catalog/*", "Makefile", ".github/*")
 SUITES = (
     Suite(
         SuiteID.DOCS,
@@ -148,7 +150,7 @@ SUITES = (
     ),
     Suite(
         SuiteID.INSTALL,
-        ("install/*", "internal/router/catalog/*", "Makefile", ".github/*"),
+        INSTALL_PATHS,
         (
             (
                 "python3",
@@ -163,6 +165,14 @@ SUITES = (
         ),
         ("bash", "node", "jq", "python3", "curl"),
         note="Run the offline install/tests/*_test.sh scripts and pi-router Python tests.",
+    ),
+    Suite(
+        SuiteID.INSTALL_CLI,
+        INSTALL_PATHS,
+        (("bash", "install/pi-router/test/opencode_smoke.sh"),),
+        ("bash", "python3", "opencode"),
+        integration=True,
+        note="OpenCode conformance uses disposable localhost fixtures and enforces the driver's pinned CLI version.",
     ),
     Suite(
         SuiteID.HMM,
@@ -194,7 +204,7 @@ SUITES = (
     ),
     Suite(
         SuiteID.FRONTEND,
-        ("frontend/*", "Dockerfile*", ".github/*"),
+        ("frontend/*", "assets/ui/types/*", "Dockerfile*", ".github/*"),
         (),
         ("node",),
         integration=True,
@@ -324,6 +334,7 @@ def validation_environment(suite: SuiteID) -> dict[str, str]:
         "WEAVE_",
         "ANTHROPIC_",
         "OPENAI_",
+        "OPENCODE_",
         "GOOGLE_",
         "GEMINI_",
         "OPENROUTER_",

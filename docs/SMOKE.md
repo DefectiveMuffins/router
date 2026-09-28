@@ -96,7 +96,10 @@ That runs `scripts/smoke/run.sh`, which:
    ports, and asks Docker for an available loopback-only router port. Existing
    Compose projects, `.env.local`, and user overrides are never adopted or edited.
 3. In replay mode, ignores exported provider keys, mounts cassettes read-only,
-   and uses an internal Docker network that blocks runtime Internet egress.
+   and keeps the router/proxy on an internal Docker network without an Internet
+   route. A fixed-destination BusyBox TCP relay (from the existing Postgres image)
+   joins a separate ingress network and publishes only a loopback port. It forwards
+   only to `server:8080`; neither runtime service joins the ingress network.
    Explicit recording supplies only exported Anthropic/OpenAI credentials and
    allows egress/cassette writes. Building images may download dependencies in
    either mode; zero provider calls is not zero build-network access.
@@ -109,9 +112,10 @@ That runs `scripts/smoke/run.sh`, which:
    isolated project, discovers its port, waits for `/health`, and seeds a local key.
 5. Runs `go test -tags smoke -count=1 -v ./smoke/` against only that port.
 6. On success or failure, verifies resource ownership labels before removing
-   that project's containers/volumes/network. Cleanup errors fail the run and
+   that project's containers/volumes/networks and invocation-built image tags.
+   Prebuilt/shared images are never removed. Cleanup errors fail the run and
    retain its override for recovery. It never runs an unscoped `down -v` or emits
-   raw seed output/automatic container log dumps. Local image tags remain cached.
+   raw seed output/automatic container log dumps. BuildKit's shared layer cache remains.
 
 Commands have bounded deadlines: 20 minutes for image builds, 3 minutes for
 startup, 10 minutes for assertions, and 2 minutes for other commands. On timeout
@@ -143,6 +147,13 @@ Validate the lifecycle without starting containers or calling providers:
 
 ```bash
 python3 -m unittest discover -s scripts/smoke -p 'test_*.py' -v
+```
+
+The opt-in network regression creates and removes its own two-container fixture;
+CI runs it before the full smoke build:
+
+```bash
+SMOKE_TEST_DOCKER=1 python3 scripts/smoke/test_runner.py ComposeMergeTest.test_replay_ingress_reaches_internal_server_without_default_route
 ```
 
 These tests drive the real entrypoint with inert Docker/curl/Go executables and,

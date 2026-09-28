@@ -51,6 +51,10 @@ class ComposeService(StrEnum):
     SERVER = "server"
     SEED = "seed"
     MITMPROXY = "mitmproxy"
+    INGRESS = "smoke-ingress"
+
+
+BUILT_SERVICES = (ComposeService.SERVER, ComposeService.SEED, ComposeService.MITMPROXY)
 
 
 class SmokePhase(StrEnum):
@@ -278,23 +282,38 @@ class SmokeRun:
                 f"  {service}:",
                 f"    labels: {json.dumps({OWNER_LABEL: self.owner})}",
             ]
-            if service in (ComposeService.POSTGRES, ComposeService.PUBSUB):
-                lines.append("    ports: !reset []")
             if service in (
+                ComposeService.POSTGRES,
+                ComposeService.PUBSUB,
                 ComposeService.SERVER,
-                ComposeService.SEED,
-                ComposeService.MITMPROXY,
             ):
+                lines.append("    ports: !reset []")
+            if service in BUILT_SERVICES:
                 image_name = (
                     f"router-{service}"
                     if self.prebuilt
                     else f"{self.project}-{service}"
                 )
                 lines.append(f"    image: {image_name}")
+                lines += [
+                    "    build:",
+                    f"      labels: {json.dumps({OWNER_LABEL: self.owner})}",
+                ]
+            if service == ComposeService.INGRESS:
+                # Internal Docker networks do not publish host ports. This
+                # relay has no proxy protocol or arbitrary upstream selection.
+                lines += [
+                    "    image: postgres:15-alpine",
+                    f"    entrypoint: {json.dumps(['/bin/busybox', 'nc', '-lk', '-p', '8080', '-e', '/bin/busybox', 'nc', ComposeService.SERVER, '8080'])}",
+                    "    networks: [default, ingress]",
+                    '    ports: !override ["127.0.0.1::8080"]',
+                    "    read_only: true",
+                    "    cap_drop: [ALL]",
+                    "    security_opt: [no-new-privileges:true]",
+                ]
             if service == ComposeService.SERVER:
                 lines += [
                     "    env_file: !reset []",
-                    '    ports: !override ["127.0.0.1::8080"]',
                     f"    environment: !override {json.dumps(server_environment)}",
                 ]
             if service == ComposeService.MITMPROXY:
@@ -317,6 +336,8 @@ class SmokeRun:
             "networks:",
             "  default:",
             f"    internal: {str(replay).lower()}",
+            f"    labels: {json.dumps({OWNER_LABEL: self.owner})}",
+            "  ingress:",
             f"    labels: {json.dumps({OWNER_LABEL: self.owner})}",
         ]
         return "\n".join(lines) + "\n"
@@ -342,10 +363,11 @@ class SmokeRun:
             "-d",
             ComposeService.SERVER,
             ComposeService.MITMPROXY,
+            ComposeService.INGRESS,
             timeout=BOOT_TIMEOUT_SECONDS,
         )
         binding = self.command(
-            *self.compose, "port", ComposeService.SERVER, "8080", capture=True
+            *self.compose, "port", ComposeService.INGRESS, "8080", capture=True
         ).stdout.strip()
         if not re.fullmatch(r"127\.0\.0\.1:[1-9]\d{0,4}", binding):
             raise RuntimeError(
@@ -454,6 +476,32 @@ class SmokeRun:
                 return
             self.require_owned_resources()
             self.command(*self.compose, "down", "--volumes")
+        if not self.prebuilt:
+            for service in BUILT_SERVICES:
+                tag = f"{self.project}-{service}"
+                identifiers = self.command(
+                    "docker",
+                    "image",
+                    "ls",
+                    "--quiet",
+                    "--filter",
+                    f"reference={tag}",
+                    capture=True,
+                ).stdout.split()
+                if not identifiers:
+                    continue
+                owner = self.command(
+                    "docker",
+                    "image",
+                    "inspect",
+                    "--format",
+                    '{{ index .Config.Labels "' + OWNER_LABEL + '" }}',
+                    tag,
+                    capture=True,
+                ).stdout.strip()
+                if owner != self.owner:
+                    raise RuntimeError(f"refusing cleanup: unowned image tag {tag}")
+                self.command("docker", "image", "rm", tag)
         shutil.rmtree(self.directory)
 
     def summary(self) -> None:

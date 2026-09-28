@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -20,7 +21,9 @@ from unittest.mock import patch
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE_ROOT / "scripts"))
-from agent_checks import ProxyMode  # noqa: E402 - unittest discovery needs scripts/ on sys.path
+from agent_checks import (  # noqa: E402 - discovery needs scripts/ on sys.path
+    ProxyMode,
+)
 
 
 class FakeFailure(StrEnum):
@@ -30,6 +33,7 @@ class FakeFailure(StrEnum):
     UP = "up"
     SEED = "seed"
     DOWN = "down"
+    BUILD = "build"
 
 
 FAKE_TOOL = r"""#!/usr/bin/env python3
@@ -82,8 +86,17 @@ elif args[1:2] == ["ls"]:
     project = args[-1].split("=", 2)[-1]
     if (root / project).exists() or os.environ.get("FAKE_COLLISION"):
         print(project)
+elif args[:2] == ["image", "inspect"]:
+    print("unowned" if os.environ.get("FAKE_UNOWNED_IMAGE") else (root / args[-1]).read_text())
+elif args[:2] == ["image", "rm"]:
+    (root / args[-1]).unlink()
 elif args[1:2] == ["inspect"]:
     print("unowned" if os.environ.get("FAKE_UNOWNED") else args[-1].removeprefix("router-smoke-"))
+elif "build" in args:
+    for service in args[args.index("build") + 1:]:
+        (root / (project + "-" + service)).write_text(project.removeprefix("router-smoke-"))
+    if failure == FakeFailure.BUILD:
+        sys.exit(7)
 elif "up" in args:
     (root / project).touch()
     if failure == FakeFailure.SIGNAL:
@@ -188,7 +201,7 @@ class SmokeRunnerTest(unittest.TestCase):
             self.assertIn("internal: true", call["override"])
             self.assertIn("/cassettes:ro", call["override"])
             self.assertEqual(call["override"].count("env_file: !reset []"), 2)
-            self.assertEqual(call["override"].count("ports: !reset []"), 2)
+            self.assertEqual(call["override"].count("ports: !reset []"), 3)
         self.assertEqual(
             [call["args"][-2:] for call in compose_calls if "down" in call["args"]],
             [["down", "--volumes"]],
@@ -294,9 +307,38 @@ class SmokeRunnerTest(unittest.TestCase):
         completed = self.run_smoke(SMOKE_PREBUILT="1")
         self.assertEqual(completed.returncode, 0, completed.stdout)
         self.assertFalse(any("build" in call["args"] for call in self.calls()))
+        self.assertFalse(
+            any(call["args"][:2] == ["image", "rm"] for call in self.calls())
+        )
         override = next(call["override"] for call in self.calls() if "project" in call)
         for image in ("router-server", "router-seed", "router-mitmproxy"):
             self.assertIn(f"image: {image}\n", override)
+
+    def test_owned_image_tags_are_removed_even_after_partial_build_failure(
+        self,
+    ) -> None:
+        for failure in ("", FakeFailure.BUILD.value):
+            with self.subTest(failure=failure):
+                before = len(self.calls())
+                completed = self.run_smoke(FAKE_FAIL=failure)
+                self.assertEqual(
+                    completed.returncode == 0, not failure, completed.stdout
+                )
+                image_removals = [
+                    call
+                    for call in self.calls()[before:]
+                    if call["args"][:2] == ["image", "rm"]
+                ]
+                self.assertEqual(3, len(image_removals))
+                self.assertFalse(list(self.state.glob("router-smoke-*")))
+
+    def test_unowned_image_tag_is_never_removed(self) -> None:
+        completed = self.run_smoke(FAKE_UNOWNED_IMAGE="1")
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("unowned image tag", completed.stdout)
+        self.assertFalse(
+            any(call["args"][:2] == ["image", "rm"] for call in self.calls())
+        )
 
     def test_cleanup_failure_is_not_reported_as_success(self) -> None:
         completed = self.run_smoke(FAKE_FAIL=FakeFailure.DOWN.value)
@@ -442,8 +484,17 @@ class ComposeMergeTest(unittest.TestCase):
             self.assertEqual(
                 server["environment"]["ANTHROPIC_API_KEY"], runner.PLACEHOLDER_KEY
             )
-            self.assertEqual(server["ports"][0]["host_ip"], "127.0.0.1")
-            self.assertNotIn("published", server["ports"][0])
+            self.assertNotIn("ports", server)
+            ingress = config["services"]["smoke-ingress"]
+            self.assertEqual(ingress["ports"][0]["host_ip"], "127.0.0.1")
+            self.assertNotIn("published", ingress["ports"][0])
+            self.assertEqual(set(server["networks"]), {"default"})
+            self.assertEqual(
+                set(config["services"]["mitmproxy"]["networks"]), {"default"}
+            )
+            self.assertEqual(set(ingress["networks"]), {"default", "ingress"})
+            self.assertEqual(ingress["entrypoint"][-2:], ["server", "8080"])
+            self.assertEqual(ingress["cap_drop"], ["ALL"])
             self.assertNotIn("ports", config["services"]["postgres"])
             self.assertNotIn("ports", config["services"]["pubsub-emulator"])
             self.assertTrue(config["networks"]["default"]["internal"])
@@ -453,6 +504,93 @@ class ComposeMergeTest(unittest.TestCase):
                 if mount["target"] == "/cassettes"
             )
             self.assertTrue(cassette["read_only"])
+
+    @unittest.skipUnless(
+        os.environ.get("SMOKE_TEST_DOCKER") == "1",
+        "explicit disposable Docker network probe",
+    )
+    def test_replay_ingress_reaches_internal_server_without_default_route(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "smoke_runner", SOURCE_ROOT / "scripts/smoke/runner.py"
+        )
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        with patch.dict(
+            os.environ,
+            {
+                "SMOKE_PROXY_MODE": ProxyMode.REPLAY.value,
+                "SMOKE_BASE_URL": "",
+                "SMOKE_PREBUILT": "1",
+                "SMOKE_KEEP_STACK": "",
+            },
+        ):
+            smoke = runner.SmokeRun()
+        try:
+            smoke.prepare()
+            config = json.loads(
+                smoke.command(
+                    *smoke.compose, "config", "--format", "json", capture=True
+                ).stdout
+            )
+            fixture = {
+                "services": {
+                    "server": {
+                        "image": "postgres:15-alpine",
+                        "entrypoint": [
+                            "/bin/busybox",
+                            "nc",
+                            "-lk",
+                            "-p",
+                            "8080",
+                            "-e",
+                            "/bin/busybox",
+                            "cat",
+                        ],
+                        "labels": {runner.OWNER_LABEL: smoke.owner},
+                        "networks": ["default"],
+                    },
+                    "smoke-ingress": config["services"]["smoke-ingress"],
+                },
+                "networks": config["networks"],
+            }
+            path = smoke.directory / "network-probe.json"
+            path.write_text(json.dumps(fixture))
+            smoke.compose = [
+                "docker",
+                "compose",
+                "--project-name",
+                smoke.project,
+                "-f",
+                str(path),
+            ]
+            smoke.started = True
+            smoke.command(*smoke.compose, "up", "-d")
+            binding = smoke.command(
+                *smoke.compose, "port", "smoke-ingress", "8080", capture=True
+            ).stdout.strip()
+            host, port = binding.split(":")
+            self.assertEqual(host, "127.0.0.1")
+            for _ in range(2):
+                with socket.create_connection(
+                    (host, int(port)), timeout=5
+                ) as connection:
+                    connection.sendall(b"synthetic-network-probe")
+                    self.assertEqual(connection.recv(128), b"synthetic-network-probe")
+            routes = smoke.command(
+                *smoke.compose,
+                "exec",
+                "-T",
+                "server",
+                "/bin/busybox",
+                "cat",
+                "/proc/net/route",
+                capture=True,
+            ).stdout
+            self.assertNotIn(
+                "00000000", [line.split()[1] for line in routes.splitlines()[1:]]
+            )
+        finally:
+            smoke.cleanup()
 
 
 if __name__ == "__main__":

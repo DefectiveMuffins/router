@@ -87,6 +87,11 @@ jobs:
         with:
           version: latest
 
+      - name: Verify loopback ingress without opening runtime egress
+        env:
+          SMOKE_TEST_DOCKER: "1"
+        run: python3 scripts/smoke/test_runner.py ComposeMergeTest.test_replay_ingress_reaches_internal_server_without_default_route
+
       - name: Start Smoke image build timer
         run: echo "SMOKE_BUILD_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
 
