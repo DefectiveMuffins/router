@@ -99,6 +99,10 @@ func SelectGroupsWithDomainPreferences(
 	evidence *DomainEvidence,
 	profile DomainProfile,
 ) (Pick, map[string]map[string]float32, map[string]map[string]router.SelectionScoreComponents, map[string][]string, bool) {
+	if evidence != nil && TerminalInfluence(profile) > 0 && validateDomainEvidence(evidence, roster) != nil {
+		// Untrusted or stale evidence must not alter the baseline selection.
+		evidence = nil
+	}
 	scoresByGroup := make(map[string]map[string]float32, len(groups))
 	componentsByGroup := make(map[string]map[string]router.SelectionScoreComponents, len(groups))
 	ordersByGroup := make(map[string][]string, len(groups))
@@ -232,7 +236,7 @@ func scoresWithDomainPreferences(
 		}
 		for arm, score := range scores {
 			cell := evidence.Arms[arm]
-			correction := float32(alpha * beta * (cell.TerminalQuality - cell.GlobalWII))
+			correction := float32(alpha * beta * (*cell.TerminalQuality - cell.GlobalWII))
 			scores[arm] = score + correction
 			domainActive = domainActive || scores[arm] != score
 		}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"time"
 
 	"weave-os/router/internal/router/hmm/rosterdata"
 )
@@ -35,11 +36,11 @@ type DomainProfile map[Domain]bool
 
 // DomainArmEvidence retains exact-effort benchmark identity from the pinned snapshot.
 type DomainArmEvidence struct {
-	GlobalWII              float64 `json:"global_wii"`
-	WPI                    float64 `json:"wpi"`
-	TerminalQuality        float64 `json:"terminal_quality"`
-	TerminalCarriedForward bool    `json:"terminal_carried_forward"`
-	TerminalClipped        bool    `json:"terminal_clipped"`
+	GlobalWII              float64  `json:"global_wii"`
+	WPI                    float64  `json:"wpi"`
+	TerminalQuality        *float64 `json:"terminal_quality"`
+	TerminalCarriedForward bool     `json:"terminal_carried_forward"`
+	TerminalClipped        bool     `json:"terminal_clipped"`
 }
 
 type domainRecipe struct {
@@ -75,43 +76,52 @@ func ParseDomainEvidence(payload []byte, roster *rosterdata.Roster) (*DomainEvid
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return nil, errors.New("sparse domain evidence has trailing content")
 	}
+	if err := validateDomainEvidence(&evidence, roster); err != nil {
+		return nil, err
+	}
+	return &evidence, nil
+}
+
+func validateDomainEvidence(evidence *DomainEvidence, roster *rosterdata.Roster) error {
 	if roster == nil || roster.SHA256 == "" || evidence.RosterSHA256 != roster.SHA256 {
-		return nil, errors.New("sparse domain evidence roster binding mismatch")
+		return errors.New("sparse domain evidence roster binding mismatch")
 	}
 	if !isSHA256(evidence.SourceSnapshotSHA256) || !isSHA256(evidence.RosterSHA256) ||
-		!isSHA256(evidence.WIINormalizationSHA256) || !isSHA256(evidence.WPINormalizationSHA256) ||
-		evidence.SourceIngestDate == "" {
-		return nil, errors.New("sparse domain evidence has invalid provenance")
+		!isSHA256(evidence.WIINormalizationSHA256) || !isSHA256(evidence.WPINormalizationSHA256) {
+		return errors.New("sparse domain evidence has invalid provenance")
+	}
+	if _, err := time.Parse(time.DateOnly, evidence.SourceIngestDate); err != nil {
+		return fmt.Errorf("sparse domain evidence has invalid ingest date: %w", err)
 	}
 	if evidence.SchemaVersion != sparseSchemaVersion || evidence.RecipeVersion != sparseRecipeVersion ||
 		evidence.WIIScoreVersion != roster.Ranking.WIIScoreVersion ||
 		evidence.WIINormalizationSHA256 != roster.Ranking.WIINormalizationSHA256 ||
 		evidence.WPIScoreVersion != roster.Ranking.WPIScoreVersion ||
 		evidence.WPINormalizationSHA256 != roster.Ranking.WPINormalizationSHA256 {
-		return nil, errors.New("sparse domain evidence version binding mismatch")
+		return errors.New("sparse domain evidence version binding mismatch")
 	}
 	weights := map[Domain]float64{DomainUI: 0, DomainLogic: 0.15, DomainData: 0, DomainInfra: 0.25, DomainDocs: 0}
 	if len(evidence.Recipes) != len(weights) || len(evidence.Arms) != len(roster.AllArms()) {
-		return nil, errors.New("sparse domain evidence has incomplete recipes or candidate coverage")
+		return errors.New("sparse domain evidence has incomplete recipes or candidate coverage")
 	}
 	for domain, weight := range weights {
 		recipe, exists := evidence.Recipes[domain]
 		if !exists || recipe.Influence != weight || len(recipe.Weights) != boolToInt(weight > 0) || (weight > 0 && recipe.Weights[terminalBenchmark] != 1) {
-			return nil, fmt.Errorf("sparse domain recipe drift for %q", domain)
+			return fmt.Errorf("sparse domain recipe drift for %q", domain)
 		}
 	}
 	for _, arm := range roster.AllArms() {
 		cell, exists := evidence.Arms[arm]
-		if !exists || !boundedIndex(cell.GlobalWII) || !boundedIndex(cell.WPI) || !boundedIndex(cell.TerminalQuality) {
-			return nil, fmt.Errorf("sparse domain evidence missing valid exact arm %q", arm)
+		if !exists || cell.TerminalQuality == nil || !boundedIndex(cell.GlobalWII) || !boundedIndex(cell.WPI) || !boundedIndex(*cell.TerminalQuality) {
+			return fmt.Errorf("sparse domain evidence missing valid exact arm %q", arm)
 		}
 		for _, cluster := range roster.Clusters {
 			if indices, found := cluster.ArmIndices[arm]; found && (math.Abs(indices.WII-cell.GlobalWII) > 1e-5 || math.Abs(indices.WPI-cell.WPI) > 1e-5) {
-				return nil, fmt.Errorf("sparse domain indices mismatch for %q", arm)
+				return fmt.Errorf("sparse domain indices mismatch for %q", arm)
 			}
 		}
 	}
-	return &evidence, nil
+	return nil
 }
 
 func boundedIndex(value float64) bool {
