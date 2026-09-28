@@ -121,6 +121,18 @@ func validateDomainEvidence(evidence *DomainEvidence, roster *rosterdata.Roster)
 			}
 		}
 	}
+	for _, cluster := range roster.Clusters {
+		for arm := range cluster.ArmScores {
+			if cell, exists := evidence.Arms[arm]; !exists || cell.TerminalQuality == nil {
+				return fmt.Errorf("sparse domain evidence missing scored arm %q", arm)
+			}
+		}
+		for arm := range cluster.ArmIndices {
+			if cell, exists := evidence.Arms[arm]; !exists || cell.TerminalQuality == nil {
+				return fmt.Errorf("sparse domain evidence missing indexed arm %q", arm)
+			}
+		}
+	}
 	return nil
 }
 

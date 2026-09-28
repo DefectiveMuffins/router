@@ -210,6 +210,35 @@ func TestSparseDomainInvalidEvidencePreservesBaseline(t *testing.T) {
 	}
 }
 
+func TestSparseDomainUnlistedScoredArmPreservesBaseline(t *testing.T) {
+	qualityHeavy := 0.8
+	for _, test := range []struct {
+		name     string
+		addToMap func(*rosterdata.Cluster)
+		bias     *float64
+	}{
+		{"neutral score map", func(cluster *rosterdata.Cluster) { cluster.ArmScores["vendor-c/unlisted"] = 35 }, nil},
+		{"dynamic index map", func(cluster *rosterdata.Cluster) {
+			cluster.ArmIndices["vendor-c/unlisted"] = rosterdata.ArmIndices{WII: 100}
+		}, &qualityHeavy},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			roster := dynamicRoster()
+			evidence := domainEvidenceForTest(t, roster)
+			cluster := roster.Clusters["low"]
+			test.addToMap(&cluster)
+			roster.Clusters["low"] = cluster
+			pick, scores, _, _, ok := selection.SelectGroupsWithDomainPreferences(
+				roster, []selection.Group{{Label: "low"}}, "", candidateSet("vendor-a/quality", "vendor-b/cheap"),
+				test.bias, nil, nil, nil, evidence, fullProfile(selection.DomainInfra),
+			)
+			require.True(t, ok)
+			assert.Equal(t, "vendor-a/quality", pick.Arm)
+			assert.Equal(t, selection.Scores(roster, "low", cluster, test.bias)["vendor-a/quality"], scores["low"]["vendor-a/quality"])
+		})
+	}
+}
+
 func boolFloat(value bool) float64 {
 	if value {
 		return 1
