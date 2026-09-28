@@ -170,9 +170,12 @@ const policyPinTier = "policy_pin"
 type pinTier string
 
 const (
-	pinTierAuthoritativeUpgradeEvidence pinTier = "authoritative_upgrade_evidence"
-	pinTierAuthoritativeExcludedPin     pinTier = "authoritative_excluded_pin"
-	pinTierAuthoritativeExcludedReroute pinTier = "authoritative_excluded_reroute"
+	pinTierAuthoritativeUpgradeEvidence        pinTier = "authoritative_upgrade_evidence"
+	pinTierAuthoritativeUpgradeConfidenceLow   pinTier = "authoritative_hmm_upgrade_confidence_low"
+	pinTierAuthoritativeDowngradeConfidenceLow pinTier = "authoritative_hmm_downgrade_confidence_low"
+	pinTierAuthoritativeDowngradeHysteresis    pinTier = "authoritative_hmm_downgrade_hysteresis"
+	pinTierAuthoritativeExcludedPin            pinTier = "authoritative_excluded_pin"
+	pinTierAuthoritativeExcludedReroute        pinTier = "authoritative_excluded_reroute"
 )
 
 // turnLoopResult bundles the routing decision and pin/planner state.
@@ -1823,7 +1826,7 @@ func (s *Service) runTurnLoop(
 					decision := pinDecision(pin)
 					res.Decision = decision
 					res.StickyHit = true
-					res.PinTier = "authoritative_" + hmmReasonUpgradeConfidenceLow
+					res.PinTier = string(pinTierAuthoritativeUpgradeConfidenceLow)
 					log.Info("turnloop suppressed low-confidence authoritative upgrade; keeping session pin",
 						"pin_model", pin.Model,
 						"pin_provider", pin.Provider,
@@ -1847,7 +1850,7 @@ func (s *Service) runTurnLoop(
 					decision := pinDecision(pin)
 					res.Decision = decision
 					res.StickyHit = true
-					res.PinTier = "authoritative_" + hmmReasonDowngradeConfidenceLow
+					res.PinTier = string(pinTierAuthoritativeDowngradeConfidenceLow)
 					log.Info("turnloop suppressed low-confidence authoritative downgrade; keeping session pin",
 						"pin_model", pin.Model,
 						"pin_provider", pin.Provider,
@@ -1866,7 +1869,7 @@ func (s *Service) runTurnLoop(
 					decision := pinDecision(pin)
 					res.Decision = decision
 					res.StickyHit = true
-					res.PinTier = "authoritative_" + hmmReasonDowngradeHysteresis
+					res.PinTier = string(pinTierAuthoritativeDowngradeHysteresis)
 					log.Info("turnloop held authoritative downgrade below the hysteresis threshold; keeping session pin",
 						"pin_model", pin.Model,
 						"pin_provider", pin.Provider,

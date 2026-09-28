@@ -5533,6 +5533,22 @@ func (s *Service) capturePolicyOutcomeResponse(ctx context.Context, w http.Respo
 	return capture, capture
 }
 
+func isAuthoritativePinHoldMismatch(res turnLoopResult, served router.Decision) bool {
+	if served.Metadata != nil {
+		return false
+	}
+	switch pinTier(res.PinTier) {
+	case pinTierAuthoritativeUpgradeEvidence,
+		pinTierAuthoritativeExcludedPin,
+		pinTierAuthoritativeUpgradeConfidenceLow,
+		pinTierAuthoritativeDowngradeConfidenceLow,
+		pinTierAuthoritativeDowngradeHysteresis:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Service) reportPolicyOutcome(ctx context.Context, res turnLoopResult, decision router.Decision, effort effortResolution, finalProvider string, servedFast bool, estimatedInputTokens, inputTokens, outputTokens, cacheCreation, cacheRead int, routeMs, proxyMs int64, proxyErr error, response *policyOutcomeResponse) {
 	routeDecision, routeMetadata, reporter, ok := s.policyOutcomeRoute(res, decision)
 	if !ok {
@@ -5547,12 +5563,23 @@ func (s *Service) reportPolicyOutcome(ctx context.Context, res turnLoopResult, d
 		!selectedServedModelMatch
 	if authoritativeModelMismatch {
 		trainingAllowed = false
-		observability.FromContext(ctx).Error(
-			"Authoritative policy model did not match served model",
-			"route_id", routeMetadata.RouteID,
-			"selected_model", routeDecision.Model,
-			"served_model", decision.Model,
-		)
+		log := observability.FromContext(ctx)
+		if isAuthoritativePinHoldMismatch(res, decision) {
+			log.Info(
+				"Authoritative policy model did not match served model",
+				"route_id", routeMetadata.RouteID,
+				"selected_model", routeDecision.Model,
+				"served_model", decision.Model,
+				"pin_tier", res.PinTier,
+			)
+		} else {
+			log.Error(
+				"Authoritative policy model did not match served model",
+				"route_id", routeMetadata.RouteID,
+				"selected_model", routeDecision.Model,
+				"served_model", decision.Model,
+			)
+		}
 	}
 	// An effort-qualified arm is only a label for what was bought when the
 	// arm's own level is the level that went on the wire; training on a clamped
