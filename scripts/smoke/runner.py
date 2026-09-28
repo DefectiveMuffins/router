@@ -20,7 +20,11 @@ from uuid import uuid4
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from agent_checks import ProxyMode, SuiteID, validation_environment
+from agent_checks import (  # noqa: E402 - standalone script needs scripts/ on sys.path
+    ProxyMode,
+    SuiteID,
+    validation_environment,
+)
 
 
 OWNER_LABEL = "ai.weave.smoke-owner"

@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE_ROOT / "scripts"))
-from agent_checks import ProxyMode
+from agent_checks import ProxyMode  # noqa: E402 - unittest discovery needs scripts/ on sys.path
 
 
 class FakeFailure(StrEnum):
