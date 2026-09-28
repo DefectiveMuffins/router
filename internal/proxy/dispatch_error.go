@@ -164,10 +164,14 @@ func ClassifyDispatchError(err error) (DispatchErrorClass, bool) {
 			LogMessage: "Rejected request: forced model is not a known model",
 		}, true
 	case errors.As(err, &passthroughUnknown):
+		message := "This request is served with the requested model as-is, but " + passthroughUnknown.Error() + ". Request a full model ID (e.g. claude-opus-5-5 or gpt-5.6-sol)."
+		if passthroughUnknown.RoutingPolicyPassthrough {
+			message = "Automatic routing isn't enabled for you in this organization, so the requested model is served as-is, but " + passthroughUnknown.Error() + ". Request a full model ID (e.g. claude-opus-5-5 or gpt-5.6-sol), or ask your org admin to enable automatic routing."
+		}
 		return DispatchErrorClass{
 			Kind:       DispatchErrorPassthroughModelUnknown,
 			Status:     http.StatusBadRequest,
-			Message:    "Automatic routing is off for your organization, so the requested model is served as-is, but " + passthroughUnknown.Error() + ". Request a full model ID (e.g. claude-opus-5-5 or gpt-5.6-sol), or ask your org admin to turn automatic routing back on.",
+			Message:    message,
 			LogLevel:   "warn",
 			LogMessage: "Rejected request: passthrough requested model is not a known model",
 		}, true

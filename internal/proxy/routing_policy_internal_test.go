@@ -128,3 +128,19 @@ func TestRoutingPolicyPreservesExplicitForcedModel(t *testing.T) {
 		}
 	}
 }
+
+func TestRoutingPolicyPassthroughUnknownModelIsAttributedToPolicy(t *testing.T) {
+	service := NewService(nil, nil, nil, false, nil, nil, false, providers.ProviderAnthropic, catalog.ModelIDClaudeHaiku45.String(), nil)
+	authService := auth.NewService(nil, nil, nil, nil, nil, nil, time.Now).WithRoutingPolicies(routingPolicyStub{mode: auth.RoutingPolicyPassthrough}, nil)
+	ctx, err := authService.WithRoutingPolicy(context.Background(), "installation")
+	require.NoError(t, err)
+
+	_, err = service.callerModelPassthroughDecision(ctx, router.Request{
+		RequestedModel:   "auto",
+		EnabledProviders: map[string]struct{}{providers.ProviderOpenAI: {}},
+	})
+
+	var unknown *PassthroughModelUnknownError
+	require.ErrorAs(t, err, &unknown)
+	assert.True(t, unknown.RoutingPolicyPassthrough, "org routing off is the remedy the admin hint points at")
+}

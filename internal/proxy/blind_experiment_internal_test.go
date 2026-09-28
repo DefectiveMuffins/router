@@ -152,6 +152,7 @@ func TestCallerModelPassthroughRejectsUnknownModelWithoutBlamingProviderKeys(t *
 	var unknown *PassthroughModelUnknownError
 	require.ErrorAs(t, err, &unknown)
 	assert.Equal(t, "auto", unknown.Model)
+	assert.False(t, unknown.RoutingPolicyPassthrough, "the blind-experiment arm is not the org routing policy")
 	assert.NotErrorIs(t, err, cluster.ErrNoEligibleProvider,
 		"a routing placeholder must not surface as the missing-provider-keys error")
 }

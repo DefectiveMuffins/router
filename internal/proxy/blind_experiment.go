@@ -20,9 +20,12 @@ const blindExperimentPublicDecisionReason = "cluster_argmax"
 var ErrPassthroughModelUnknown = errors.New("passthrough requested model is not a known model")
 
 // PassthroughModelUnknownError carries the unresolvable value so the
-// dispatch classifier can quote it back.
+// dispatch classifier can quote it back. RoutingPolicyPassthrough is false
+// for blind-experiment passthrough, whose arm must stay undisclosed and which
+// no admin routing change would fix.
 type PassthroughModelUnknownError struct {
-	Model string
+	Model                    string
+	RoutingPolicyPassthrough bool
 }
 
 // Error implements error.
@@ -86,7 +89,10 @@ func (s *Service) callerModelPassthroughDecision(ctx context.Context, req router
 
 	model, found := catalog.ByID(req.RequestedModel)
 	if !found {
-		return router.Decision{}, &PassthroughModelUnknownError{Model: req.RequestedModel}
+		return router.Decision{}, &PassthroughModelUnknownError{
+			Model:                    req.RequestedModel,
+			RoutingPolicyPassthrough: auth.RoutingPassthroughFrom(ctx),
+		}
 	}
 
 	availableProviders := req.EnabledProviders
