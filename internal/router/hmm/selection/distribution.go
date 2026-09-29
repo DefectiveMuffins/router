@@ -28,6 +28,7 @@ func RoutingDistribution(roster *rosterdata.Roster, gridN int, availableProvider
 		labels = append(labels, label)
 	}
 	sort.Strings(labels)
+	routingTargets := catalog.HMMRoutingTargetSet(availableProviders)
 	points := make([]cluster.DistributionPoint, 0, gridN)
 	for gridIndex := 0; gridIndex < gridN; gridIndex++ {
 		qualityBias := float64(gridIndex) / float64(gridN-1)
@@ -40,7 +41,7 @@ func RoutingDistribution(roster *rosterdata.Roster, gridN int, availableProvider
 			for _, arm := range clusterRoster.Arms {
 				baseRosterID, _ := hmm.SplitEffort(arm)
 				catalogID := hmm.CatalogIDForRoster(baseRosterID)
-				binding, ok := EligibleBinding(catalogID, availableProviders, excludedModels, excludedProviders)
+				binding, ok := eligibleBinding(catalogID, routingTargets, availableProviders, excludedModels, excludedProviders)
 				if !ok {
 					continue
 				}
@@ -88,20 +89,21 @@ func RoutingDistribution(roster *rosterdata.Roster, gridN int, availableProvider
 // EligibleBinding returns the first policy-allowed catalog binding that survives
 // the same model and provider exclusions used by managed request selection.
 func EligibleBinding(catalogID string, availableProviders, excludedModels, excludedProviders map[string]struct{}) (catalog.ProviderBinding, bool) {
+	return eligibleBinding(catalogID, catalog.HMMRoutingTargetSet(availableProviders), availableProviders, excludedModels, excludedProviders)
+}
+
+func eligibleBinding(catalogID string, routingTargets, availableProviders, excludedModels, excludedProviders map[string]struct{}) (catalog.ProviderBinding, bool) {
 	if _, excluded := excludedModels[catalogID]; excluded {
 		return catalog.ProviderBinding{}, false
 	}
-	model, ok := catalog.ByID(catalogID)
+	_, ok := routingTargets[catalogID]
 	if !ok {
 		return catalog.ProviderBinding{}, false
 	}
 	providerPolicy := policy.ManagedProviderPolicy()
-	for _, binding := range model.Providers {
-		if _, wired := availableProviders[binding.Provider]; !wired {
-			continue
-		}
+	for _, binding := range catalog.EnumerateBindings(catalogID, availableProviders) {
 		if _, excluded := excludedProviders[binding.Provider]; !excluded && providerPolicy.Allows(binding.Provider) {
-			return binding, true
+			return binding.ProviderBinding, true
 		}
 	}
 	return catalog.ProviderBinding{}, false

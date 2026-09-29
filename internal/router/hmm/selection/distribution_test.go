@@ -1,15 +1,20 @@
 package selection_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"weave-os/router/internal/providers"
+	"weave-os/router/internal/router"
+	"weave-os/router/internal/router/catalog"
 	"weave-os/router/internal/router/cluster"
+	"weave-os/router/internal/router/hmm/armid"
 	"weave-os/router/internal/router/hmm/rosterdata"
 	"weave-os/router/internal/router/hmm/selection"
+	"weave-os/router/internal/router/policy"
 )
 
 func distributionWiredProviders() map[string]struct{} {
@@ -80,6 +85,52 @@ func TestRoutingDistributionUsesRemainingProviderBinding(t *testing.T) {
 		providers.ProviderAnthropic: {}, providers.ProviderAnthropicGateway: {}, providers.ProviderOpenAIGateway: {},
 	})
 	require.Error(t, err)
+}
+
+func TestRoutingDistributionMatchesServingCandidateUniverse(t *testing.T) {
+	const retiredArm = "openai/gpt-5.5"
+	const servingArm = "anthropic/claude-haiku-4.5"
+	roster := &rosterdata.Roster{
+		SchemaVersion: rosterdata.SchemaVersionPolicyV1,
+		Ranking: rosterdata.Ranking{
+			Alpha: map[string]float64{"low": 0.5}, AlphaMin: map[string]float64{"low": 0.1},
+			AlphaMax: map[string]float64{"low": 0.9}, QualityBiasNeutral: 0.7,
+		},
+		Clusters: map[string]rosterdata.Cluster{"low": {
+			Arms:       []string{retiredArm, servingArm},
+			ArmScores:  map[string]float64{retiredArm: 100, servingArm: 0},
+			ArmIndices: map[string]rosterdata.ArmIndices{retiredArm: {WII: 100, WPI: 0}, servingArm: {WII: 0, WPI: 100}},
+		}},
+	}
+	wiredProviders := map[string]struct{}{
+		providers.ProviderOpenAI: {}, providers.ProviderAnthropic: {}, providers.ProviderAnthropicGateway: {},
+	}
+	requestProviders := map[string]struct{}{
+		providers.ProviderOpenAI: {}, providers.ProviderAnthropicGateway: {},
+	}
+	resolver := policy.NewResolver(catalog.HMMRoutingTargetSet(wiredProviders), wiredProviders, armid.ForModel, policy.ManagedProviderPolicy())
+	resolved := resolver.Resolve(router.Request{EnabledProviders: requestProviders})
+	candidateRosterIDs := make([]string, 0, len(resolved.Candidates))
+	for _, candidate := range resolved.Candidates {
+		candidateRosterIDs = append(candidateRosterIDs, candidate.RosterID)
+	}
+	assert.NotContains(t, candidateRosterIDs, retiredArm)
+	assert.Contains(t, candidateRosterIDs, servingArm)
+	assert.Equal(t, providers.ProviderAnthropicGateway, resolved.CandidateProviders()["claude-haiku-4-5"])
+
+	qualityBias := 1.0
+	pick, err := selection.Selector(roster)(context.Background(), policy.SelectionInput{
+		ClassOrder: []string{"low"}, ClassProbabilities: map[string]float64{"low": 1},
+		CandidateRosterIDs: candidateRosterIDs, QualityBias: &qualityBias,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, servingArm, pick.Arm)
+
+	points, err := selection.RoutingDistribution(roster, 2, wiredProviders, nil, map[string]struct{}{providers.ProviderAnthropic: {}})
+	require.NoError(t, err)
+	require.Len(t, points, 2)
+	assert.Equal(t, []cluster.ModelShare{{Model: "claude-haiku-4-5", Share: 1}}, points[1].Models)
+	assert.Equal(t, 0.001, points[1].ProjectedCostPer1KInputUSD)
 }
 
 func TestRoutingDistributionRejectsUnwiredCatalogBindings(t *testing.T) {
