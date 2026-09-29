@@ -2683,33 +2683,29 @@ toggle_claude() {
   case "$mode" in
     status)
       local on_hint="on --claude"
+      local effective_base="$committed_base" key_settings_file="$settings_file" status_label="Claude Code"
       [ "$proj" = "true" ] && on_hint="on --claude --scope project"
-      if [ "$parked_present" = "true" ]; then
-        ok "Claude Code: ${C_BOLD}off${C_RESET} — routing directly to Anthropic. Run '$on_hint' to re-enable."
-      elif [ "$proj" = "true" ]; then
-        local_base="$(json_get "$local_settings_file" '.env.ANTHROPIC_BASE_URL')"
-        if [ -n "$local_base" ] && ! router_shaped_url "$local_base"; then
-          ok "Claude Code (project): ${C_BOLD}off${C_RESET} — routing directly to Anthropic. Run '$on_hint' to re-enable."
-        elif router_shaped_url "$committed_base"; then
-          # Router URL is committed, but it only authenticates if this teammate's
-          # settings.local.json carries the key header. A fresh clone (shared
-          # settings.json, no personal local file) has the URL but no key.
-          if claude_key_present "$local_settings_file"; then
-            ok "Claude Code (project): ${C_BOLD}on${C_RESET} — routing through $committed_base."
-          else
-            warn "Claude Code (project): router URL is set but your personal router key is missing (no settings.local.json) — requests won't authenticate. Run the installer to add your key."
-          fi
-        else
-          info "Claude Code (project): not configured for the router. Run the installer first."
+      if [ "$proj" = "true" ]; then
+        status_label="Claude Code (project)"
+        if [ -f "$local_settings_file" ] && jq -e '.env | has("ANTHROPIC_BASE_URL")' "$local_settings_file" >/dev/null 2>&1; then
+          effective_base="$(json_get "$local_settings_file" '.env.ANTHROPIC_BASE_URL')"
         fi
-      elif router_shaped_url "$committed_base"; then
-        if claude_key_present "$settings_file"; then
-          ok "Claude Code: ${C_BOLD}on${C_RESET} — routing through $committed_base."
-        else
-          warn "Claude Code: router URL is set but the router key header is missing — requests won't authenticate. Run the installer to restore it."
+        if [ -f "$local_settings_file" ] && jq -e '.env | has("ANTHROPIC_CUSTOM_HEADERS")' "$local_settings_file" >/dev/null 2>&1; then
+          key_settings_file="$local_settings_file"
         fi
+      fi
+      if router_shaped_url "$effective_base"; then
+        if claude_key_present "$key_settings_file"; then
+          ok "$status_label: ${C_BOLD}on${C_RESET} in saved settings — endpoint $effective_base."
+        else
+          warn "$status_label: router URL is set but the router key header is missing from active settings — requests won't authenticate. Run the installer to add your key."
+        fi
+      elif [ "$parked_present" = "true" ]; then
+        ok "Claude Code: ${C_BOLD}off${C_RESET} in saved settings — direct to Anthropic. Run '$on_hint' to re-enable."
+      elif [ -n "$effective_base" ]; then
+        ok "$status_label: ${C_BOLD}off${C_RESET} in saved settings — direct to Anthropic. Run '$on_hint' to re-enable."
       else
-        info "Claude Code: not configured for the router. Run the installer first."
+        info "$status_label: not configured for the router in this scope."
       fi
       ;;
     off)
@@ -3567,7 +3563,7 @@ run_login() {
 }
 
 run_router_status() {
-  local saved_target claude_endpoint codex_endpoint redacted_key
+  local saved_target codex_endpoint redacted_key
   saved_target="$target"
   settings_dir="$settings_base/.claude"
   settings_file="$settings_dir/settings.json"
@@ -3577,7 +3573,6 @@ run_router_status() {
     local_settings_file=""
   fi
   codex_config_file="$settings_base/.codex/config.toml"
-  target="claude"; claude_endpoint="$(resolve_installed_endpoint)"
   target="codex"; codex_endpoint="$(resolve_installed_endpoint)"
   target="$saved_target"
   if [ "${#api_key}" -gt 8 ]; then
@@ -3587,11 +3582,14 @@ run_router_status() {
   fi
   printf 'Router: %s\nIdentity: %s\n' "$base_url" "$redacted_key"
   if models_api GET "/validate"; then
-    printf 'Connectivity: connected\n'
+    printf 'Connectivity: connected (API key accepted; inference not verified)\n'
   else
     printf 'Connectivity: unavailable (HTTP %s)\n' "${models_http_status:-network error}"
   fi
-  printf 'Claude Code: %s\n' "$(if [ "${claude_endpoint%/}" = "${base_url%/}" ]; then printf 'points at Router'; elif [ -n "$claude_endpoint" ]; then printf 'different endpoint (%s)' "$claude_endpoint"; else printf 'not configured'; fi)"
+  printf 'Claude Code settings: %s (scope: %s)\n' "$settings_dir" "$scope"
+  # Administrative lookup includes parked credentials; routing status must not.
+  toggle_claude
+  printf 'Status describes this scope only, not a running session; other scopes or runtime overrides may differ. Restart Claude Code after on/off changes.\n'
   printf 'Codex: %s\n' "$(if [ "${codex_endpoint%/}" = "${base_url%/}" ]; then printf 'points at Router'; elif [ -n "$codex_endpoint" ]; then printf 'different endpoint (%s)' "$codex_endpoint"; else printf 'not configured'; fi)"
   if models_api GET "/v1/subscriptions/accounts"; then
     printf 'Subscription accounts:\n'
