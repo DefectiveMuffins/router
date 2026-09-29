@@ -232,7 +232,7 @@ func RegisterWithFeatures(engine *gin.Engine, authSvc *auth.Service, proxySvc *p
 	if internalToken := strings.TrimSpace(os.Getenv("ROUTER_INTERNAL_SERVICE_TOKEN")); internalToken != "" {
 		internalGroup := engine.Group("/internal/v1", middleware.WithTimeout(adminTimeout), middleware.WithInternalServiceAuth(internalToken))
 		if mode == DeploymentModeManaged {
-			internalGroup.POST("/routing-discovery", admin.InternalRoutingDiscoveryHandler(policyregistry.CurrentPolicySource{Store: features.ManagedDiscoveryStore}))
+			internalGroup.POST("/routing-discovery", admin.InternalRoutingDiscoveryHandler(policyregistry.CurrentPolicySource{Store: features.ManagedDiscoveryStore}, features.AvailableProviders))
 		}
 		internalGroup.POST("/provider-keys/models", admin.InternalListUpstreamModelsHandler(authSvc, proxySvc))
 		if authSvc.SubscriptionAccountsEnabled() {

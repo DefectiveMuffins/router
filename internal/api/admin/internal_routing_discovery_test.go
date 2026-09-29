@@ -15,6 +15,7 @@ import (
 
 	"weave-os/router/internal/api/admin"
 	"weave-os/router/internal/policyregistry"
+	"weave-os/router/internal/providers"
 	"weave-os/router/internal/router/hmm/rosterdata"
 	"weave-os/router/internal/server/middleware"
 )
@@ -39,8 +40,15 @@ func (reader *discoveryPolicyReader) ReadCurrentPolicy(_ context.Context, target
 func discoveryEngine(reader admin.CurrentPolicyReader) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	engine.POST("/internal/v1/routing-discovery", middleware.WithInternalServiceAuth("test-token"), admin.InternalRoutingDiscoveryHandler(reader))
+	engine.POST("/internal/v1/routing-discovery", middleware.WithInternalServiceAuth("test-token"), admin.InternalRoutingDiscoveryHandler(reader, discoveryWiredProviders()))
 	return engine
+}
+
+func discoveryWiredProviders() map[string]struct{} {
+	return map[string]struct{}{
+		providers.ProviderAnthropic: {}, providers.ProviderAnthropicGateway: {},
+		providers.ProviderOpenAIGateway: {}, providers.ProviderOpenAI: {}, providers.ProviderXAI: {},
+	}
 }
 
 func discoveryRequest(body string, token string) *http.Request {
@@ -62,7 +70,10 @@ func discoveryFixture() *discoveryPolicyReader {
 				AlphaMax: map[string]float64{"low": 0.9}, QualityBiasNeutral: 0.7,
 			},
 			Clusters: map[string]rosterdata.Cluster{"low": {
-				Arms:      []string{"openai/gpt-5.6-luna", "x-ai/grok-4.6"},
+				Arms: []string{"openai/gpt-5.6-luna", "x-ai/grok-4.6"},
+				ArmsByHarness: map[rosterdata.Harness][]string{
+					rosterdata.HarnessCodex: {"anthropic/claude-haiku-4.5"},
+				},
 				ArmScores: map[string]float64{"openai/gpt-5.6-luna": 10, "x-ai/grok-4.6": 9},
 				ArmIndices: map[string]rosterdata.ArmIndices{
 					"openai/gpt-5.6-luna": {WII: 80, WPI: 10}, "x-ai/grok-4.6": {WII: 60, WPI: 5},
@@ -96,6 +107,18 @@ func TestInternalRoutingDiscoveryRequiresTokenAndReturnsPolicyIdentity(t *testin
 			Arms   []string `json:"arms"`
 			Models []string `json:"models"`
 		} `json:"clusters"`
+		Harnesses map[string][]struct {
+			Cluster string   `json:"cluster"`
+			Arms    []string `json:"arms"`
+			Models  []string `json:"models"`
+		} `json:"harnesses"`
+		Models []struct {
+			Model    string `json:"model"`
+			Provider string `json:"provider"`
+		} `json:"models"`
+		Catalog []struct {
+			Provider string `json:"provider"`
+		} `json:"catalog"`
 		Distribution []json.RawMessage `json:"distribution"`
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
@@ -104,6 +127,21 @@ func TestInternalRoutingDiscoveryRequiresTokenAndReturnsPolicyIdentity(t *testin
 	require.Len(t, response.Clusters, 1)
 	assert.Equal(t, []string{"gpt-5.6-luna", "grok-4.6"}, response.Clusters[0].Models)
 	assert.Len(t, response.Distribution, 2)
+	modelIDs := make(map[string]struct{}, len(response.Models))
+	for _, model := range response.Models {
+		modelIDs[model.Model] = struct{}{}
+		assert.NotEqual(t, providers.ProviderOpenRouter, model.Provider)
+	}
+	_, hasHarnessOnlyModel := modelIDs["claude-haiku-4-5"]
+	assert.True(t, hasHarnessOnlyModel)
+	for _, model := range response.Catalog {
+		assert.NotEqual(t, providers.ProviderOpenRouter, model.Provider)
+	}
+	codexClusters, hasCodexOrder := response.Harnesses[string(rosterdata.HarnessCodex)]
+	require.True(t, hasCodexOrder)
+	require.Len(t, codexClusters, 1)
+	assert.Equal(t, []string{"anthropic/claude-haiku-4.5"}, codexClusters[0].Arms)
+	assert.Equal(t, []string{"claude-haiku-4-5"}, codexClusters[0].Models)
 
 	reader.current.ActivationID = "active-2"
 	reader.current.PolicySHA256 = "policy-2"

@@ -17,7 +17,9 @@ import (
 	"weave-os/router/internal/router/catalog"
 	"weave-os/router/internal/router/cluster"
 	"weave-os/router/internal/router/hmm"
+	"weave-os/router/internal/router/hmm/rosterdata"
 	hmmselection "weave-os/router/internal/router/hmm/selection"
+	"weave-os/router/internal/router/policy"
 )
 
 const (
@@ -45,6 +47,7 @@ type routingDiscoveryResponse struct {
 	CandidateSHA256    string                       `json:"candidate_sha256"`
 	PolicySHA256       string                       `json:"policy_sha256"`
 	Clusters           []hmmClusterDTO              `json:"clusters"`
+	Harnesses          map[string][]hmmClusterDTO   `json:"harnesses,omitempty"`
 	Models             []catalog.ModelListing       `json:"models"`
 	Catalog            []catalog.ModelListing       `json:"catalog"`
 	Distribution       []cluster.DistributionPoint  `json:"distribution"`
@@ -52,7 +55,7 @@ type routingDiscoveryResponse struct {
 
 // InternalRoutingDiscoveryHandler projects the current admitted managed policy.
 // The caller is authenticated by the /internal/v1 group's service token.
-func InternalRoutingDiscoveryHandler(source CurrentPolicyReader) gin.HandlerFunc {
+func InternalRoutingDiscoveryHandler(source CurrentPolicyReader, availableProviders map[string]struct{}) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxDiscoveryBodyBytes)
@@ -103,7 +106,7 @@ func InternalRoutingDiscoveryHandler(source CurrentPolicyReader) gin.HandlerFunc
 		}
 		excludedModels := discoverySet(request.ExcludedModels)
 		excludedProviders := discoverySet(request.ExcludedProviders)
-		points, err := hmmselection.RoutingDistribution(current.Roster, gridN, excludedModels, excludedProviders)
+		points, err := hmmselection.RoutingDistribution(current.Roster, gridN, availableProviders, excludedModels, excludedProviders)
 		if errors.Is(err, cluster.ErrNoEligibleProvider) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "exclusions leave no eligible models"})
 			return
@@ -113,12 +116,20 @@ func InternalRoutingDiscoveryHandler(source CurrentPolicyReader) gin.HandlerFunc
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "managed projection unavailable"})
 			return
 		}
-		clusters, models := discoveryRoster(current)
+		clusters, harnesses, models := discoveryRoster(current, availableProviders)
+		managedProviderPolicy := policy.ManagedProviderPolicy()
+		catalogModels := make([]catalog.ModelListing, 0)
+		for _, model := range catalog.BindingListing() {
+			if _, wired := availableProviders[model.Provider]; !wired || !managedProviderPolicy.Allows(model.Provider) {
+				continue
+			}
+			catalogModels = append(catalogModels, model)
+		}
 		c.JSON(http.StatusOK, routingDiscoveryResponse{
 			Target: current.Target, ProfileKey: current.ProfileKey, ActivationID: current.ActivationID,
 			SelectionSetSHA256: current.SelectionSetSHA256, CandidateSHA256: current.CandidateSHA256,
-			PolicySHA256: current.PolicySHA256, Clusters: clusters, Models: models,
-			Catalog: catalog.BindingListing(), Distribution: points,
+			PolicySHA256: current.PolicySHA256, Clusters: clusters, Harnesses: harnesses, Models: models,
+			Catalog: catalogModels, Distribution: points,
 		})
 	}
 }
@@ -176,38 +187,53 @@ func catalogModelExists(modelID string) bool {
 	return false
 }
 
-func discoveryRoster(current policyregistry.CurrentPolicy) ([]hmmClusterDTO, []catalog.ModelListing) {
+func discoveryRoster(current policyregistry.CurrentPolicy, availableProviders map[string]struct{}) ([]hmmClusterDTO, map[string][]hmmClusterDTO, []catalog.ModelListing) {
 	clusterNames := make([]string, 0, len(current.Roster.Clusters))
 	for name := range current.Roster.Clusters {
 		clusterNames = append(clusterNames, name)
 	}
 	sort.Strings(clusterNames)
-	clusters := make([]hmmClusterDTO, 0, len(clusterNames))
+	clusterArms := make(map[string][]string, len(clusterNames))
+	harnessArms := make(map[string]map[string][]string)
 	modelByID := make(map[string]catalog.Model)
 	for _, name := range clusterNames {
 		clusterRoster := current.Roster.Clusters[name]
-		for _, arm := range clusterRoster.Arms {
+		defaultArms, _ := hmmselection.ArmOrder(clusterRoster, "")
+		clusterArms[name] = append([]string(nil), defaultArms...)
+		armsToList := append([]string(nil), defaultArms...)
+		for harness, arms := range clusterRoster.ArmsByHarness {
+			if harness == rosterdata.HarnessAll || len(arms) == 0 {
+				continue
+			}
+			harnessKey := string(harness)
+			if harnessArms[harnessKey] == nil {
+				harnessArms[harnessKey] = make(map[string][]string)
+			}
+			harnessArms[harnessKey][name] = append([]string(nil), arms...)
+			armsToList = append(armsToList, arms...)
+		}
+		for _, arm := range armsToList {
 			baseRosterID, _ := hmm.SplitEffort(arm)
 			catalogID := hmm.CatalogIDForRoster(baseRosterID)
 			if model, ok := catalog.ByID(catalogID); ok {
 				modelByID[catalogID] = model
 			}
 		}
-		arms, _ := hmmselection.ArmOrder(clusterRoster, "")
-		models := make([]string, 0, len(arms))
-		for _, arm := range arms {
-			models = append(models, hmm.CatalogIDForRoster(arm))
-		}
-		clusters = append(clusters, hmmClusterDTO{Cluster: name, Arms: arms, Models: models})
 	}
+	clusters := rosterClusterDTOs(clusterArms)
+	harnesses := rosterHarnessDTOs(harnessArms)
 	models := make([]catalog.ModelListing, 0, len(modelByID))
+	managedProviderPolicy := policy.ManagedProviderPolicy()
 	for catalogID, model := range modelByID {
 		for _, binding := range model.Providers {
+			if _, wired := availableProviders[binding.Provider]; !wired || !managedProviderPolicy.Allows(binding.Provider) {
+				continue
+			}
 			models = append(models, catalog.ModelListing{
 				Model: catalogID, Provider: binding.Provider, FastMode: catalog.SupportsFastMode(catalogID),
 			})
 		}
 	}
 	catalog.SortListing(models)
-	return clusters, models
+	return clusters, harnesses, models
 }
