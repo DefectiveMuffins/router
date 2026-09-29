@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"weave-os/router/internal/router/hmm"
+	"weave-os/router/internal/router/hmm/policycompiler"
 	"weave-os/router/internal/router/hmm/rosterdata"
 	"weave-os/router/internal/router/hmm/selection"
 )
@@ -157,19 +159,29 @@ func parseAlphaFlags(values []string, clusters map[string]rosterdata.Cluster) (m
 }
 
 func renderDraftPreview(roster *rosterdata.Roster, source, environment string, harness *string, qualityBias *float64, alphaOverrides map[string]float64, gridSize int) (draftPreview, error) {
+	sourceSchemaVersion := roster.SchemaVersion
+	sourcePayload, err := json.Marshal(roster)
+	if err != nil {
+		return draftPreview{}, fmt.Errorf("encode preview roster: %w", err)
+	}
+	_, compiledRoster, err := policycompiler.Compile(sourcePayload, policycompiler.Options{ClassOrder: roster.ClassOrder})
+	if err != nil {
+		return draftPreview{}, fmt.Errorf("compile preview roster: %w", err)
+	}
+	roster = compiledRoster
+	harnessName := strings.ReplaceAll(harnessValue(harness), "-", "_")
 	dynamic := qualityBias != nil || len(alphaOverrides) > 0 || gridSize > 0
 	if dynamic {
 		for label, cluster := range roster.Clusters {
-			order, _ := selection.ArmOrder(cluster, harnessValue(harness))
-			usable := false
+			order, _ := selection.ArmOrder(cluster, harnessName)
+			pins := previewManualPins(cluster, harnessName)
 			for _, arm := range order {
-				if _, exists := cluster.ArmIndices[arm]; exists {
-					usable = true
-					break
+				if containsString(pins, arm) {
+					continue
 				}
-			}
-			if !usable {
-				return draftPreview{}, fmt.Errorf("dynamic preview requires WII/WPI indices for cluster %q", label)
+				if _, exists := cluster.ArmIndices[arm]; !exists {
+					return draftPreview{}, fmt.Errorf("dynamic preview requires WII/WPI indices for cluster %q", label)
+				}
 			}
 		}
 	}
@@ -179,12 +191,12 @@ func renderDraftPreview(roster *rosterdata.Roster, source, environment string, h
 		effectiveQuality = &neutral
 	}
 	preview := draftPreview{
-		Environment: environment, Source: source, SchemaVersion: roster.SchemaVersion,
+		Environment: environment, Source: source, SchemaVersion: sourceSchemaVersion,
 		PreviewSchema: draftPreviewSchema, Harness: harness, QualityBias: effectiveQuality,
 		Clusters: make(map[string]previewCluster, len(roster.Clusters)),
 	}
 	for label := range roster.Clusters {
-		clusterPreview, err := renderPreviewCluster(roster, label, harnessValue(harness), effectiveQuality, alphaOverrides)
+		clusterPreview, err := renderPreviewCluster(roster, label, harnessName, effectiveQuality, alphaOverrides)
 		if err != nil {
 			return draftPreview{}, err
 		}
@@ -200,7 +212,7 @@ func renderDraftPreview(roster *rosterdata.Roster, source, environment string, h
 		for index := range gridSize {
 			pointQuality := float64(index) / float64(gridSize-1)
 			for _, label := range labels {
-				clusterPreview, err := renderPreviewCluster(roster, label, harnessValue(harness), &pointQuality, nil)
+				clusterPreview, err := renderPreviewCluster(roster, label, harnessName, &pointQuality, nil)
 				if err != nil {
 					return draftPreview{}, err
 				}
@@ -252,11 +264,7 @@ func renderPreviewCluster(roster *rosterdata.Roster, label, harness string, qual
 	for index, arm := range originalOrder {
 		positions[arm] = index + 1
 	}
-	pins := append([]string(nil), cluster.ManualPinsByHarness[rosterdata.HarnessAll]...)
-	pins = append(pins, cluster.ManualPinsByHarness[rosterdata.Harness(harness)]...)
-	if harness != "" {
-		pins = append(pins, cluster.ManualPinsByHarness[rosterdata.Harness(strings.ReplaceAll(harness, "-", "_"))]...)
-	}
+	pins := previewManualPins(cluster, harness)
 	preferredVendors := cluster.PreferredVendorsByHarness[rosterdata.Harness(harness)]
 	if len(preferredVendors) == 0 {
 		preferredVendors = cluster.PreferredVendorsByHarness[rosterdata.Harness(strings.ReplaceAll(harness, "-", "_"))]
@@ -278,6 +286,11 @@ func renderPreviewCluster(roster *rosterdata.Roster, label, harness string, qual
 		})
 	}
 	return preview, nil
+}
+
+func previewManualPins(cluster rosterdata.Cluster, harness string) []string {
+	pins := append([]string(nil), cluster.ManualPinsByHarness[rosterdata.HarnessAll]...)
+	return append(pins, cluster.ManualPinsByHarness[rosterdata.Harness(harness)]...)
 }
 
 func harnessValue(harness *string) string {

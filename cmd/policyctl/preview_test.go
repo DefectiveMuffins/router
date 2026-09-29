@@ -18,6 +18,7 @@ import (
 func previewRoster() *rosterdata.Roster {
 	return &rosterdata.Roster{
 		SchemaVersion: rosterdata.SchemaVersionV7,
+		ClassOrder:    []string{"low"},
 		Ranking: rosterdata.Ranking{
 			Alpha: map[string]float64{"low": 0.6}, AlphaMin: map[string]float64{"low": 0.1},
 			AlphaMax: map[string]float64{"low": 0.9}, QualityBiasNeutral: 0.7,
@@ -38,6 +39,82 @@ func previewRoster() *rosterdata.Roster {
 			},
 		},
 	}
+}
+
+func TestDraftPreviewAppliesCompiledSourcePreferences(t *testing.T) {
+	preferenceCases := []struct {
+		name            string
+		configure       func(*rosterdata.Roster)
+		manualPin       bool
+		preferredVendor bool
+	}{
+		{
+			name: "manual pin",
+			configure: func(roster *rosterdata.Roster) {
+				roster.ManualPins = map[string]map[string][]string{
+					"codex": {"low": {"x-ai/grok-4.6"}},
+				}
+			},
+			manualPin: true,
+		},
+		{
+			name: "vendor priority",
+			configure: func(roster *rosterdata.Roster) {
+				roster.HarnessVendorPriority = map[rosterdata.Harness]rosterdata.HarnessVendorPriority{
+					rosterdata.HarnessCodex: {Vendors: []string{"x-ai"}, Clusters: []string{"low"}},
+				}
+			},
+			preferredVendor: true,
+		},
+	}
+
+	for _, preferenceCase := range preferenceCases {
+		t.Run(preferenceCase.name, func(t *testing.T) {
+			roster := &rosterdata.Roster{
+				SchemaVersion: rosterdata.SchemaVersionV7,
+				ClassOrder:    []string{"low"},
+				Ranking: rosterdata.Ranking{
+					Alpha: map[string]float64{"low": 0.6}, AlphaMin: map[string]float64{"low": 0.1},
+					AlphaMax: map[string]float64{"low": 0.9}, QualityBiasNeutral: 0.7,
+					WIIScoreVersion: "fixture", WIINormalizationSHA256: "fixture",
+					WPIScoreVersion: "fixture", WPINormalizationSHA256: "fixture",
+				},
+				Clusters: map[string]rosterdata.Cluster{"low": {
+					ComplexityLabel: "low", Arms: []string{"openai/gpt-6-sol:high", "x-ai/grok-4.6"},
+					CostRefUSD: 0.01, LatencyRefMS: 500,
+					ArmScores: map[string]float64{"openai/gpt-6-sol:high": 20, "x-ai/grok-4.6": 10},
+					ArmIndices: map[string]rosterdata.ArmIndices{
+						"openai/gpt-6-sol:high": {WII: 90, WPI: 80}, "x-ai/grok-4.6": {WII: 60, WPI: 10},
+					},
+				}},
+			}
+			preferenceCase.configure(roster)
+			qualityBias := 1.0
+			harness := string(rosterdata.HarnessCodex)
+
+			preview, err := renderDraftPreview(roster, "/draft.json", "staging-01", &harness, &qualityBias, nil, 0)
+			require.NoError(t, err)
+			assert.Equal(t, "x-ai/grok-4.6", preview.Clusters["low"].Arms[0].Arm)
+			assert.Equal(t, preferenceCase.manualPin, preview.Clusters["low"].Arms[0].ManualPin)
+			assert.Equal(t, preferenceCase.preferredVendor, preview.Clusters["low"].Arms[0].PreferredVendor)
+		})
+	}
+}
+
+func TestDynamicPreviewAllowsFullyGloballyPinnedClusterWithoutIndices(t *testing.T) {
+	roster := previewRoster()
+	cluster := roster.Clusters["low"]
+	cluster.ArmIndices = nil
+	cluster.ManualPinsByHarness = map[rosterdata.Harness][]string{
+		rosterdata.HarnessAll: {"openai/gpt-6-luna", "openai/gpt-6-sol:high"},
+	}
+	roster.Clusters["low"] = cluster
+	qualityBias := 1.0
+
+	preview, err := renderDraftPreview(roster, "/draft.json", "staging-01", nil, &qualityBias, nil, 0)
+	require.NoError(t, err)
+	require.Len(t, preview.Clusters["low"].Arms, 2)
+	assert.Equal(t, "openai/gpt-6-luna", preview.Clusters["low"].Arms[0].Arm)
 }
 
 func TestDraftPreviewUsesServingSelectorOrder(t *testing.T) {
