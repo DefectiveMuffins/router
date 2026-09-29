@@ -92,7 +92,7 @@ func TestDraftPreviewAppliesCompiledSourcePreferences(t *testing.T) {
 			qualityBias := 1.0
 			harness := string(rosterdata.HarnessCodex)
 
-			preview, err := renderDraftPreview(roster, "/draft.json", "staging-01", &harness, &qualityBias, nil, 0)
+			preview, err := renderDraftPreview(roster, nil, "/draft.json", "staging-01", &harness, &qualityBias, nil, 0)
 			require.NoError(t, err)
 			assert.Equal(t, "x-ai/grok-4.6", preview.Clusters["low"].Arms[0].Arm)
 			assert.Equal(t, preferenceCase.manualPin, preview.Clusters["low"].Arms[0].ManualPin)
@@ -111,7 +111,7 @@ func TestDynamicPreviewAllowsFullyGloballyPinnedClusterWithoutIndices(t *testing
 	roster.Clusters["low"] = cluster
 	qualityBias := 1.0
 
-	preview, err := renderDraftPreview(roster, "/draft.json", "staging-01", nil, &qualityBias, nil, 0)
+	preview, err := renderDraftPreview(roster, nil, "/draft.json", "staging-01", nil, &qualityBias, nil, 0)
 	require.NoError(t, err)
 	require.Len(t, preview.Clusters["low"].Arms, 2)
 	assert.Equal(t, "openai/gpt-6-luna", preview.Clusters["low"].Arms[0].Arm)
@@ -120,7 +120,7 @@ func TestDynamicPreviewAllowsFullyGloballyPinnedClusterWithoutIndices(t *testing
 func TestDraftPreviewUsesServingSelectorOrder(t *testing.T) {
 	roster := previewRoster()
 	quality := 1.0
-	preview, err := renderDraftPreview(roster, "/draft.json", "staging-01", nil, &quality, nil, 3)
+	preview, err := renderDraftPreview(roster, nil, "/draft.json", "staging-01", nil, &quality, nil, 3)
 	require.NoError(t, err)
 	assert.Equal(t, draftPreviewSchema, preview.PreviewSchema)
 	assert.Equal(t, "openai/gpt-6-sol:high", preview.Clusters["low"].Arms[0].Arm)
@@ -142,7 +142,7 @@ func TestDraftPreviewUsesServingSelectorOrder(t *testing.T) {
 func TestDraftPreviewStaticHarnessPinsAndAlphaOverride(t *testing.T) {
 	roster := previewRoster()
 	pi := string(rosterdata.HarnessPI)
-	static, err := renderDraftPreview(roster, "/draft.json", "", &pi, nil, nil, 0)
+	static, err := renderDraftPreview(roster, nil, "/draft.json", "", &pi, nil, nil, 0)
 	require.NoError(t, err)
 	assert.Nil(t, static.QualityBias)
 	assert.Equal(t, "openai/gpt-6-luna", static.Clusters["low"].Arms[0].Arm)
@@ -151,19 +151,23 @@ func TestDraftPreviewStaticHarnessPinsAndAlphaOverride(t *testing.T) {
 
 	codex := string(rosterdata.HarnessCodex)
 	quality := 1.0
-	pinned, err := renderDraftPreview(roster, "/draft.json", "", &codex, &quality, nil, 0)
+	pinned, err := renderDraftPreview(roster, nil, "/draft.json", "", &codex, &quality, nil, 0)
 	require.NoError(t, err)
 	assert.Equal(t, "openai/gpt-6-luna", pinned.Clusters["low"].Arms[0].Arm)
 	assert.True(t, pinned.Clusters["low"].Arms[0].ManualPin)
 
-	overridden, err := renderDraftPreview(roster, "/draft.json", "", nil, nil, map[string]float64{"low": 0.1}, 0)
+	overridden, err := renderDraftPreview(roster, nil, "/draft.json", "", nil, nil, map[string]float64{"low": 0.1}, 0)
 	require.NoError(t, err)
+	assert.Nil(t, overridden.QualityBias)
+	assert.Nil(t, overridden.Clusters["low"].QualityBias)
 	assert.Equal(t, 0.1, overridden.Clusters["low"].Alpha)
 	assert.Equal(t, "openai/gpt-6-luna", overridden.Clusters["low"].Arms[0].Arm)
 }
 
-func TestRunPreviewReadsDraftWithoutRegistry(t *testing.T) {
-	payload, err := json.Marshal(previewRoster())
+func TestRunPreviewUsesExplicitClassOrderWithoutRegistry(t *testing.T) {
+	roster := previewRoster()
+	roster.ClassOrder = nil
+	payload, err := json.Marshal(roster)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "draft.json")
 	require.NoError(t, os.WriteFile(path, payload, 0o644))
@@ -172,7 +176,7 @@ func TestRunPreviewReadsDraftWithoutRegistry(t *testing.T) {
 	stdout := os.Stdout
 	os.Stdout = output
 	t.Cleanup(func() { os.Stdout = stdout })
-	runErr := runPreview([]string{"--roster-file", path, "--environment", "staging-01", "--harness", "pi", "--grid", "2"})
+	runErr := runPreview([]string{"--roster-file", path, "--class-order", "low", "--environment", "staging-01", "--harness", "pi", "--grid", "2"})
 	os.Stdout = stdout
 	require.NoError(t, output.Close())
 	require.NoError(t, runErr)

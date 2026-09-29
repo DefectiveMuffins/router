@@ -38,6 +38,8 @@ environment label, roster schema, harness, quality bias, per-cluster order and
 scores, WII/WPI, pins, vendor flags, and optional quality-grid winners) and
 declares `preview_schema_version: hmm_draft_roster_preview_v1`. Scores come from
 the selector's float32 serving score map, rounded to six decimals.
+Use `--class-order class-a,class-b` when a nonstandard taxonomy omits
+`class_order` from its draft roster.
 
 ```bash
 go run ./cmd/policyctl preview --roster-file /path/to/draft.json --harness codex

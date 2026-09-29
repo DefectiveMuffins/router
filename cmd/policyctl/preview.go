@@ -65,6 +65,7 @@ type draftPreview struct {
 func runPreview(args []string) error {
 	flags := flag.NewFlagSet(string(commandPreview), flag.ContinueOnError)
 	rosterPath := flags.String("roster-file", "", "local draft roster JSON")
+	classOrderRaw := flags.String("class-order", "", "comma-separated classifier class order")
 	environment := flags.String("environment", "", "optional caller environment label")
 	harnessRaw := flags.String("harness", "", "request harness")
 	qualityRaw := flags.String("quality-bias", "", "quality/price dial in [0,1]")
@@ -110,7 +111,16 @@ func runPreview(args []string) error {
 	if err != nil {
 		return err
 	}
-	preview, err := renderDraftPreview(roster, source, *environment, harness, qualityBias, alphaOverrides, *gridSize)
+	preview, err := renderDraftPreview(
+		roster,
+		parseList(*classOrderRaw),
+		source,
+		*environment,
+		harness,
+		qualityBias,
+		alphaOverrides,
+		*gridSize,
+	)
 	if err != nil {
 		return err
 	}
@@ -158,13 +168,21 @@ func parseAlphaFlags(values []string, clusters map[string]rosterdata.Cluster) (m
 	return overrides, nil
 }
 
-func renderDraftPreview(roster *rosterdata.Roster, source, environment string, harness *string, qualityBias *float64, alphaOverrides map[string]float64, gridSize int) (draftPreview, error) {
+func renderDraftPreview(
+	roster *rosterdata.Roster,
+	classOrder []string,
+	source, environment string,
+	harness *string,
+	qualityBias *float64,
+	alphaOverrides map[string]float64,
+	gridSize int,
+) (draftPreview, error) {
 	sourceSchemaVersion := roster.SchemaVersion
 	sourcePayload, err := json.Marshal(roster)
 	if err != nil {
 		return draftPreview{}, fmt.Errorf("encode preview roster: %w", err)
 	}
-	_, compiledRoster, err := policycompiler.Compile(sourcePayload, policycompiler.Options{ClassOrder: roster.ClassOrder})
+	_, compiledRoster, err := policycompiler.Compile(sourcePayload, policycompiler.Options{ClassOrder: classOrder})
 	if err != nil {
 		return draftPreview{}, fmt.Errorf("compile preview roster: %w", err)
 	}
@@ -186,7 +204,7 @@ func renderDraftPreview(roster *rosterdata.Roster, source, environment string, h
 		}
 	}
 	effectiveQuality := qualityBias
-	if dynamic && effectiveQuality == nil {
+	if dynamic && effectiveQuality == nil && len(alphaOverrides) == 0 {
 		neutral := roster.Ranking.QualityBiasNeutral
 		effectiveQuality = &neutral
 	}
