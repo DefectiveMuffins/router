@@ -150,7 +150,7 @@ WITH completed_session AS (
     SELECT scope FROM router.escalation_sessions
     WHERE scope = $4::bytea AND ordinal = $5::bigint
         AND lease_token IS NULL AND expires_at > clock_timestamp()
-    FOR UPDATE
+    FOR SHARE
 )
 INSERT INTO router.escalation_continuations (activation, response_digest, scope, history)
 SELECT $1::bytea, $2::bytea, scope, $3::jsonb
@@ -166,13 +166,13 @@ type InsertEscalationContinuationParams struct {
 	Ordinal        int64
 }
 
-// Lock the session while checking ordinal so a successor cannot race the response write.
+// Share-lock the session to allow concurrent continuation inserts but exclude updates.
 //
 //	WITH completed_session AS (
 //	    SELECT scope FROM router.escalation_sessions
 //	    WHERE scope = $4::bytea AND ordinal = $5::bigint
 //	        AND lease_token IS NULL AND expires_at > clock_timestamp()
-//	    FOR UPDATE
+//	    FOR SHARE
 //	)
 //	INSERT INTO router.escalation_continuations (activation, response_digest, scope, history)
 //	SELECT $1::bytea, $2::bytea, scope, $3::jsonb
