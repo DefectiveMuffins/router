@@ -184,6 +184,6 @@ func TestRoutingDistributionHonorsExclusions(t *testing.T) {
 }
 
 func TestRoutingDistributionBoundsGridBeforeAllocation(t *testing.T) {
-	_, err := selection.RoutingDistribution(dynamicRoster(), 1_000_000_000, nil, nil)
+	_, err := selection.RoutingDistribution(dynamicRoster(), 1_000_000_000, nil, nil, nil)
 	require.ErrorContains(t, err, "grid exceeds 101 points")
 }
