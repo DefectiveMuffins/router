@@ -8,7 +8,7 @@
 # Usage:
 #   docker compose up --build
 #   # Optional capture in .env.local: ROUTER_HTTP_CAPTURE_FILE=/router-captures/router-traffic.jsonl
-#   # Capture output is written to ../../.context/router-captures/ on the host.
+#   # Capture output is written to the ignored .local/router-captures/ on the host.
 #
 # Health checks:
 #   curl http://localhost:8080/health
@@ -139,7 +139,7 @@ services:
     volumes:
       # Set ROUTER_HTTP_CAPTURE_FILE=/router-captures/<new-file>.jsonl in
       # .env.local to enable Compose capture and keep the output on the host.
-      - ../../.context/router-captures:/router-captures
+      - ./.local/router-captures:/router-captures
     ports:
       - "127.0.0.1:8080:8080"
     restart: unless-stopped

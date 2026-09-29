@@ -21,7 +21,35 @@ import (
 	"weave-os/router/internal/trafficcapture"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
+
+func TestTrafficCaptureWriterRollsBackFailedRecord(t *testing.T) {
+	capturePath := filepath.Join(t.TempDir(), "capture.jsonl")
+	t.Setenv(trafficCaptureFileEnv, capturePath)
+	capture, err := newTrafficCaptureFromEnvironment()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, capture.Close()) })
+	require.NoError(t, capture.Record(trafficcapture.Exchange{ID: "before"}))
+
+	spool := &trafficcapture.BodySpool{}
+	spool.Write([]byte("synthetic body"))
+	require.NoError(t, spool.Close())
+	require.Error(t, capture.Record(trafficcapture.Exchange{
+		ID: "failed", Request: trafficcapture.Request{BodySpool: spool},
+	}))
+	require.NoError(t, capture.Record(trafficcapture.Exchange{ID: "after"}))
+
+	capturedBytes, err := os.ReadFile(capturePath)
+	require.NoError(t, err)
+	lines := bytes.Split(bytes.TrimSpace(capturedBytes), []byte("\n"))
+	require.Len(t, lines, 2)
+	for index, expectedID := range []string{"before", "after"} {
+		var exchange trafficcapture.Exchange
+		require.NoError(t, json.Unmarshal(lines[index], &exchange))
+		require.Equal(t, expectedID, exchange.ID)
+	}
+}
 
 func TestTrafficCaptureCorrelatesActualLocalHTTPExchanges(t *testing.T) {
 	gin.SetMode(gin.TestMode)

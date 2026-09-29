@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -81,8 +82,22 @@ func (capture *jsonlTrafficCapture) Record(exchange trafficcapture.Exchange) err
 		}
 	}
 	exchange.Request.URL = trafficcapture.RedactURL(exchange.Request.URL)
+	recordOffset, err := capture.file.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("locate HTTP capture record boundary: %w", err)
+	}
 	if err := writeCaptureExchange(capture.file, exchange); err != nil {
-		return fmt.Errorf("encode HTTP capture exchange: %w", err)
+		encodeErr := fmt.Errorf("encode HTTP capture exchange: %w", err)
+		// A partial JSONL line must not absorb the next successful exchange.
+		rollbackErr := capture.file.Truncate(recordOffset)
+		if rollbackErr == nil {
+			rollbackErr = capture.file.Sync()
+		}
+		if rollbackErr != nil {
+			capture.closed = true
+			return errors.Join(encodeErr, fmt.Errorf("rollback HTTP capture exchange: %w", rollbackErr), capture.file.Close())
+		}
+		return encodeErr
 	}
 	if err := capture.file.Sync(); err != nil {
 		return fmt.Errorf("sync HTTP capture exchange: %w", err)

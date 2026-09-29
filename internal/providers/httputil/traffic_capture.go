@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -40,75 +39,33 @@ func (t *trafficCaptureRoundTripper) RoundTrip(request *http.Request) (*http.Res
 		BodySpool:        requestBody.spool,
 	}
 
-	response, err := t.transport.RoundTrip(request)
-	requestComplete, requestErr := requestBody.snapshot()
-	exchangeRequest.BodyComplete = requestComplete && requestBody.spoolError() == nil
-	if err != nil {
-		captureErrors := []string{trafficcapture.RedactRequestError(err)}
-		if requestErr != nil {
-			captureErrors = append(captureErrors, "read upstream request body: "+requestErr.Error())
+	response, transportErr := t.transport.RoundTrip(request)
+	var responseRecord *trafficcapture.Response
+	var responseBodySpool *trafficcapture.BodySpool
+	if transportErr == nil {
+		responseRecord = &trafficcapture.Response{
+			Proto:            response.Proto,
+			StatusCode:       response.StatusCode,
+			Header:           cloneHTTPHeaders(response.Header),
+			ContentLength:    response.ContentLength,
+			TransferEncoding: append([]string(nil), response.TransferEncoding...),
 		}
-		if spoolErr := requestBody.spoolError(); spoolErr != nil {
-			captureErrors = append(captureErrors, spoolErr.Error())
-		}
-		recordUpstreamExchange(request.Context(), scope, trafficcapture.Exchange{
-			SchemaVersion: 1,
-			ID:            exchangeID,
-			ParentID:      scope.ExchangeID(),
-			Attempt:       attempt,
-			Direction:     trafficcapture.DirectionUpstream,
-			StartedAt:     startedAt,
-			DurationMS:    time.Since(startedAt).Milliseconds(),
-			Request:       exchangeRequest,
-			Error:         strings.Join(captureErrors, "; "),
-		})
-		closeBodySpool(request.Context(), exchangeID, requestBody.spool)
-		return nil, err
-	}
-
-	responseRecord := trafficcapture.Response{
-		Proto:            response.Proto,
-		StatusCode:       response.StatusCode,
-		Header:           cloneHTTPHeaders(response.Header),
-		ContentLength:    response.ContentLength,
-		TransferEncoding: append([]string(nil), response.TransferEncoding...),
-	}
-	if response.Body == nil || response.Body == http.NoBody {
-		responseRecord.BodyComplete = true
-		exchange := trafficcapture.Exchange{
-			SchemaVersion: 1,
-			ID:            exchangeID,
-			ParentID:      scope.ExchangeID(),
-			Attempt:       attempt,
-			Direction:     trafficcapture.DirectionUpstream,
-			StartedAt:     startedAt,
-			DurationMS:    time.Since(startedAt).Milliseconds(),
-			Request:       exchangeRequest,
-			Response:      &responseRecord,
-			Complete:      exchangeRequest.BodyComplete,
-		}
-		if requestErr != nil {
-			exchange.Error = "read upstream request body: " + requestErr.Error()
-		}
-		if spoolErr := requestBody.spoolError(); spoolErr != nil {
-			exchange.Error = joinCaptureError(exchange.Error, spoolErr.Error())
-			exchange.Complete = false
-		}
-		recordUpstreamExchange(request.Context(), scope, exchange)
-		closeBodySpool(request.Context(), exchangeID, requestBody.spool)
-		return response, nil
-	}
-
-	responseBodySpool := &trafficcapture.BodySpool{}
-	response.Body = &trafficCaptureBody{
-		ReadCloser:     response.Body,
-		spool:          responseBodySpool,
-		expectedLength: response.ContentLength,
-		finish: func(responseComplete bool, responseErr error) {
-			requestComplete, requestBodyErr := requestBody.snapshot()
-			exchangeRequest.BodyComplete = requestComplete && requestBody.spoolError() == nil
+		if response.Body != nil && response.Body != http.NoBody {
+			responseBodySpool = &trafficcapture.BodySpool{}
 			responseRecord.BodySpool = responseBodySpool
-			responseRecord.BodyComplete = responseComplete && responseBodySpool.Err() == nil
+		}
+	}
+	finishResponse := func(responseComplete bool, responseErr error) {
+		// RoundTrip may return while the transport is still consuming/closing
+		// the request. Retain both spools until both bodies have finished.
+		requestBody.whenFinished(func(requestComplete bool, requestBodyErr error) {
+			exchangeRequest.BodyComplete = requestComplete && requestBody.spoolError() == nil
+			if responseBodySpool != nil && responseBodySpool.Err() != nil {
+				responseComplete = false
+			}
+			if responseRecord != nil {
+				responseRecord.BodyComplete = responseComplete
+			}
 			exchange := trafficcapture.Exchange{
 				SchemaVersion: 1,
 				ID:            exchangeID,
@@ -118,11 +75,14 @@ func (t *trafficCaptureRoundTripper) RoundTrip(request *http.Request) (*http.Res
 				StartedAt:     startedAt,
 				DurationMS:    time.Since(startedAt).Milliseconds(),
 				Request:       exchangeRequest,
-				Response:      &responseRecord,
-				Complete:      exchangeRequest.BodyComplete && responseRecord.BodyComplete,
+				Response:      responseRecord,
+				Complete:      exchangeRequest.BodyComplete && responseComplete,
+			}
+			if transportErr != nil {
+				exchange.Error = trafficcapture.RedactRequestError(transportErr)
 			}
 			if requestBodyErr != nil {
-				exchange.Error = "read upstream request body: " + requestBodyErr.Error()
+				exchange.Error = joinCaptureError(exchange.Error, "read upstream request body: "+requestBodyErr.Error())
 			}
 			if spoolErr := requestBody.spoolError(); spoolErr != nil {
 				exchange.Error = joinCaptureError(exchange.Error, spoolErr.Error())
@@ -130,13 +90,29 @@ func (t *trafficCaptureRoundTripper) RoundTrip(request *http.Request) (*http.Res
 			if responseErr != nil {
 				exchange.Error = joinCaptureError(exchange.Error, "read upstream response body: "+responseErr.Error())
 			}
-			if spoolErr := responseBodySpool.Err(); spoolErr != nil {
-				exchange.Error = joinCaptureError(exchange.Error, spoolErr.Error())
+			if responseBodySpool != nil {
+				if spoolErr := responseBodySpool.Err(); spoolErr != nil {
+					exchange.Error = joinCaptureError(exchange.Error, spoolErr.Error())
+				}
 			}
 			recordUpstreamExchange(request.Context(), scope, exchange)
 			closeBodySpool(request.Context(), exchangeID, responseBodySpool)
 			closeBodySpool(request.Context(), exchangeID, requestBody.spool)
-		},
+		})
+	}
+	if transportErr != nil {
+		finishResponse(false, nil)
+		return nil, transportErr
+	}
+	if responseBodySpool == nil {
+		finishResponse(true, nil)
+		return response, nil
+	}
+	response.Body = &trafficCaptureBody{
+		ReadCloser:     response.Body,
+		spool:          responseBodySpool,
+		expectedLength: response.ContentLength,
+		finish:         finishResponse,
 	}
 	return response, nil
 }
@@ -146,12 +122,15 @@ type requestBodyCapture struct {
 	spool    *trafficcapture.BodySpool
 	complete bool
 	readErr  error
+	finished bool
+	onFinish func(bool, error)
 }
 
 func captureRequestBody(request *http.Request) *requestBodyCapture {
 	capture := &requestBodyCapture{spool: &trafficcapture.BodySpool{}}
 	if request.Body == nil || request.Body == http.NoBody {
 		capture.complete = true
+		capture.finished = true
 		capture.spool = nil
 		return capture
 	}
@@ -163,16 +142,27 @@ func captureRequestBody(request *http.Request) *requestBodyCapture {
 			capture.mu.Lock()
 			capture.complete = complete
 			capture.readErr = readErr
+			capture.finished = true
+			onFinish := capture.onFinish
 			capture.mu.Unlock()
+			if onFinish != nil {
+				onFinish(complete, readErr)
+			}
 		},
 	}
 	return capture
 }
 
-func (capture *requestBodyCapture) snapshot() (bool, error) {
+func (capture *requestBodyCapture) whenFinished(onFinish func(bool, error)) {
 	capture.mu.Lock()
-	defer capture.mu.Unlock()
-	return capture.complete, capture.readErr
+	if !capture.finished {
+		capture.onFinish = onFinish
+		capture.mu.Unlock()
+		return
+	}
+	complete, readErr := capture.complete, capture.readErr
+	capture.mu.Unlock()
+	onFinish(complete, readErr)
 }
 
 func (capture *requestBodyCapture) spoolError() error {
@@ -225,11 +215,11 @@ type trafficCaptureBody struct {
 }
 
 func (body *trafficCaptureBody) Read(buffer []byte) (int, error) {
+	body.mu.Lock()
 	count, err := body.ReadCloser.Read(buffer)
 	if count > 0 {
 		body.spool.Write(buffer[:count])
 	}
-	body.mu.Lock()
 	body.bytesRead += int64(count)
 	if err == io.EOF {
 		if body.expectedLength > 0 && body.bytesRead != body.expectedLength {
