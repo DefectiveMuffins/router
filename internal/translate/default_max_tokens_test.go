@@ -35,6 +35,41 @@ func TestAnthropicSameFormat_ExistingMaxTokensUnchanged(t *testing.T) {
 	assert.Equal(t, float64(1024), out["max_tokens"])
 }
 
+func TestPrepareAnthropic_ClampsTitleGenerationOutputToHaikuLimit(t *testing.T) {
+	body := []byte(`{"model":"claude-opus-5-5","max_tokens":128000,"messages":[{"role":"user","content":"Give this conversation a title"}]}`)
+	opts := translate.EmitOptions{
+		TargetModel:  "claude-haiku-4-5",
+		Capabilities: router.Lookup("claude-haiku-4-5"),
+	}
+	out := parseAndEmit(t, body, "anthropic", opts)
+	assert.Equal(t, "claude-haiku-4-5", out["model"])
+	assert.Equal(t, float64(64000), out["max_tokens"])
+
+	validBody := []byte(`{"model":"claude-opus-5-5","max_tokens":32000,"messages":[{"role":"user","content":"Give this conversation a title"}]}`)
+	validOutput := parseAndEmit(t, validBody, "anthropic", opts)
+	assert.Equal(t, float64(32000), validOutput["max_tokens"])
+
+	opusOutput := parseAndEmit(t, body, "anthropic", translate.EmitOptions{
+		TargetModel:  "claude-opus-5-5",
+		Capabilities: router.Lookup("claude-opus-5-5"),
+	})
+	assert.Equal(t, float64(128000), opusOutput["max_tokens"])
+}
+
+func TestPrepareAnthropic_ClampsCrossFormatOutputToHaikuLimit(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","max_tokens":128000,"messages":[{"role":"user","content":"Give this conversation a title"}]}`)
+	env, err := translate.ParseOpenAI(body)
+	require.NoError(t, err)
+	prepared, err := env.PrepareAnthropic(http.Header{}, translate.EmitOptions{
+		TargetModel:  "claude-haiku-4-5",
+		Capabilities: router.Lookup("claude-haiku-4-5"),
+	})
+	require.NoError(t, err)
+	var output map[string]any
+	require.NoError(t, json.Unmarshal(prepared.Body, &output))
+	assert.Equal(t, float64(64000), output["max_tokens"])
+}
+
 func TestAnthropicSameFormat_AdaptiveDefaultsHaveReasoningHeadroom(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"hi"}]}`)
 	for _, model := range []string{
