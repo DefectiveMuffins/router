@@ -2684,8 +2684,8 @@ toggle_claude() {
     status)
       local on_hint="on --claude"
       local effective_base="$committed_base" key_settings_file="$settings_file" status_label="Claude Code"
-      [ "$proj" = "true" ] && on_hint="on --claude --scope project"
-      if [ "$proj" = "true" ]; then
+      [ "$scope" = "project" ] && on_hint="on --claude --scope project"
+      if [ "$scope" = "project" ]; then
         status_label="Claude Code (project)"
         if [ -f "$local_settings_file" ] && jq -e '.env | has("ANTHROPIC_BASE_URL")' "$local_settings_file" >/dev/null 2>&1; then
           effective_base="$(json_get "$local_settings_file" '.env.ANTHROPIC_BASE_URL')"
@@ -2698,7 +2698,7 @@ toggle_claude() {
         if claude_key_present "$key_settings_file"; then
           ok "$status_label: ${C_BOLD}on${C_RESET} in saved settings — endpoint $effective_base."
         else
-          warn "$status_label: router URL is set but the router key header is missing from active settings — requests won't authenticate. Run the installer to add your key."
+          warn "$status_label: router key header is missing from active settings — Weave-key authentication is not configured; other authentication methods are not checked."
         fi
       elif [ "$parked_present" = "true" ]; then
         ok "Claude Code: ${C_BOLD}off${C_RESET} in saved settings — direct to Anthropic. Run '$on_hint' to re-enable."
