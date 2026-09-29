@@ -6,12 +6,54 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestGatewayHTTPHandlerPreservesEmptySessionIDPath(t *testing.T) {
+	var forwardedPath string
+	forwarder := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwardedPath = r.URL.Path
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	notMounted := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("health handler must not receive a product request")
+	})
+	handler := gatewayHTTPHandler(forwarder, notMounted, notMounted)
+	request := httptest.NewRequest(http.MethodGet, "/v1/sessions//cost", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	require.Equal(t, "/v1/sessions//cost", forwardedPath)
+	require.Equal(t, http.StatusBadRequest, response.Code)
+}
+
+func TestGatewayHTTPHandlerKeepsHealthRoutesLocal(t *testing.T) {
+	forwarder := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("health routes must not reach the forwarding handler")
+	})
+	readiness := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) })
+	startup := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) })
+	handler := gatewayHTTPHandler(forwarder, readiness, startup)
+
+	for _, test := range []struct {
+		path   string
+		status int
+	}{
+		{"/health", http.StatusOK},
+		{"/readyz", http.StatusServiceUnavailable},
+		{"/startupz", http.StatusAccepted},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+		require.Equal(t, test.status, response.Code, test.path)
+	}
+}
 
 func TestWorkerTransportUsesRequestDeadlineForFirstByte(t *testing.T) {
 	for _, test := range []struct {

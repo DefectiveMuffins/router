@@ -16,7 +16,8 @@ round, a turn, and an action. The distinction decides what a row *is*.
 ## 1. Issue an analytics key
 
 Analytics keys are read-only. They carry the `ra_` prefix, they authenticate
-**only** the `/v1/analytics/*` endpoints, and they cannot route inference,
+**only** the `/v1/analytics/*` endpoints and the
+[session cost](SESSION_COST.md) read, and they cannot route inference,
 resolve provider credentials, or spend money. A key that is stolen from an ETL
 config can read telemetry and nothing else.
 

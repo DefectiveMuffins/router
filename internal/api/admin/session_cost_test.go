@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,23 +51,45 @@ type sessionCostBody struct {
 	SessionID              string  `json:"session_id"`
 	RequestCount           int64   `json:"request_count"`
 	ActualCostUSDMicros    int64   `json:"actual_cost_usd_micros"`
+	ActualCostUSD          float64 `json:"actual_cost_usd"`
 	RequestedCostUSDMicros int64   `json:"requested_cost_usd_micros"`
+	RequestedCostUSD       float64 `json:"requested_cost_usd"`
 	SavingsUSDMicros       int64   `json:"savings_usd_micros"`
 	SavingsUSD             float64 `json:"savings_usd"`
 	InputTokens            int64   `json:"input_tokens"`
+	OutputTokens           int64   `json:"output_tokens"`
+	CacheCreationTokens    int64   `json:"cache_creation_tokens"`
+	CacheReadTokens        int64   `json:"cache_read_tokens"`
+	LastRecordedAt         string  `json:"last_recorded_at"`
+}
+
+type publicErrorBody struct {
+	Message     string  `json:"message"`
+	Description *string `json:"description"`
+}
+
+func decodePublicError(t *testing.T, rec *httptest.ResponseRecorder) publicErrorBody {
+	t.Helper()
+	var body publicErrorBody
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.NotEmpty(t, body.Message)
+	return body
 }
 
 func TestSessionCostHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	t.Run("reports savings as requested minus actual", func(t *testing.T) {
+	t.Run("reports the public cost fields plus savings", func(t *testing.T) {
 		repo := &sessionCostRepo{cost: proxy.SessionCost{
 			SessionID:              "session-1",
 			RequestCount:           3,
 			ActualCostUSDMicros:    250_000,
 			RequestedCostUSDMicros: 570_000,
 			InputTokens:            1200,
-			LastRecordedAt:         time.Unix(1700000000, 0).UTC(),
+			OutputTokens:           340,
+			CacheCreationTokens:    56,
+			CacheReadTokens:        7800,
+			LastRecordedAt:         time.Date(2026, 9, 28, 12, 30, 45, 123456789, time.FixedZone("PDT", -7*60*60)),
 		}}
 		engine := sessionCostEngine(t, repo, &auth.Installation{ID: uuid.NewString()})
 
@@ -76,11 +99,21 @@ func TestSessionCostHandler(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 		var body sessionCostBody
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-		require.Equal(t, "session-1", body.SessionID)
-		require.Equal(t, int64(3), body.RequestCount)
-		require.Equal(t, int64(320_000), body.SavingsUSDMicros)
-		require.InDelta(t, 0.32, body.SavingsUSD, 1e-9)
-		require.Equal(t, int64(1200), body.InputTokens)
+		require.Equal(t, sessionCostBody{
+			SessionID:              "session-1",
+			RequestCount:           3,
+			ActualCostUSDMicros:    250_000,
+			ActualCostUSD:          0.25,
+			RequestedCostUSDMicros: 570_000,
+			RequestedCostUSD:       0.57,
+			SavingsUSDMicros:       320_000,
+			SavingsUSD:             0.32,
+			InputTokens:            1200,
+			OutputTokens:           340,
+			CacheCreationTokens:    56,
+			CacheReadTokens:        7800,
+			LastRecordedAt:         "2026-09-28T19:30:45.123456789Z",
+		}, body)
 		require.Equal(t, "session-1", repo.seenSessionID)
 	})
 
@@ -119,9 +152,45 @@ func TestSessionCostHandler(t *testing.T) {
 		engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/sessions/session-1/cost", nil))
 
 		require.Equal(t, http.StatusNotFound, rec.Code)
+		decodePublicError(t, rec)
 	})
 
-	t.Run("500s a repository failure", func(t *testing.T) {
+	t.Run("400s a session id over the identifier limit", func(t *testing.T) {
+		repo := &sessionCostRepo{cost: proxy.SessionCost{SessionID: "session-1"}}
+		engine := sessionCostEngine(t, repo, &auth.Installation{ID: uuid.NewString()})
+
+		rec := httptest.NewRecorder()
+		engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/sessions/"+strings.Repeat("s", proxy.MaxClientIdentifierLen+1)+"/cost", nil))
+
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		body := decodePublicError(t, rec)
+		require.NotNil(t, body.Description)
+		require.Empty(t, repo.seenSessionID, "an invalid id must not reach the repository")
+	})
+
+	t.Run("accepts a session id at the identifier limit", func(t *testing.T) {
+		repo := &sessionCostRepo{cost: proxy.SessionCost{SessionID: "session-1"}}
+		engine := sessionCostEngine(t, repo, &auth.Installation{ID: uuid.NewString()})
+		sessionID := strings.Repeat("s", proxy.MaxClientIdentifierLen)
+
+		rec := httptest.NewRecorder()
+		engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/sessions/"+sessionID+"/cost", nil))
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Equal(t, sessionID, repo.seenSessionID)
+	})
+
+	t.Run("503s when telemetry storage is not configured", func(t *testing.T) {
+		engine := sessionCostEngine(t, nil, &auth.Installation{ID: uuid.NewString()})
+
+		rec := httptest.NewRecorder()
+		engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/sessions/session-1/cost", nil))
+
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+		decodePublicError(t, rec)
+	})
+
+	t.Run("500s a repository failure without leaking it", func(t *testing.T) {
 		repo := &sessionCostRepo{err: errors.New("postgres is down")}
 		engine := sessionCostEngine(t, repo, &auth.Installation{ID: uuid.NewString()})
 
@@ -129,6 +198,8 @@ func TestSessionCostHandler(t *testing.T) {
 		engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/sessions/session-1/cost", nil))
 
 		require.Equal(t, http.StatusInternalServerError, rec.Code)
+		decodePublicError(t, rec)
+		require.NotContains(t, rec.Body.String(), "postgres")
 	})
 
 	t.Run("401s without an authenticated installation", func(t *testing.T) {

@@ -18,7 +18,23 @@ func (s *Service) VerifyAnalyticsAPIKey(ctx context.Context, rawToken string) (*
 	if !strings.HasPrefix(rawToken, AnalyticsAPIKeyPrefix+"_") {
 		return nil, nil, ErrInvalidPrefix
 	}
+	return s.verifySlimAPIKey(ctx, rawToken, ScopeAnalyticsRead)
+}
 
+// VerifyReadAPIKey authenticates an rk_ routing key or an ra_ analytics key for
+// installation-scoped read surfaces. Both resolve to the owning installation;
+// neither loads BYOK secrets, cluster allowlists or subscription state.
+func (s *Service) VerifyReadAPIKey(ctx context.Context, rawToken string) (*Installation, *APIKey, error) {
+	if strings.HasPrefix(rawToken, AnalyticsAPIKeyPrefix+"_") {
+		return s.verifySlimAPIKey(ctx, rawToken, ScopeAnalyticsRead)
+	}
+	if !strings.HasPrefix(rawToken, APIKeyPrefix+"_") {
+		return nil, nil, ErrInvalidPrefix
+	}
+	return s.verifySlimAPIKey(ctx, rawToken, ScopeRouting)
+}
+
+func (s *Service) verifySlimAPIKey(ctx context.Context, rawToken string, scope APIKeyScope) (*Installation, *APIKey, error) {
 	keyHash := HashAPIKeySHA256(rawToken)
 
 	if cached, ok := s.cache.Get(keyHash); ok {
@@ -26,7 +42,7 @@ func (s *Service) VerifyAnalyticsAPIKey(ctx context.Context, rawToken string) (*
 			return nil, nil, ErrInvalidToken
 		}
 		if cached.APIKey != nil {
-			if cached.APIKey.Scope != ScopeAnalyticsRead {
+			if cached.APIKey.Scope.Normalized() != scope {
 				return nil, nil, ErrWrongKeyScope
 			}
 			s.fireMarkUsed(cached.APIKey, cached.Installation)
@@ -43,13 +59,15 @@ func (s *Service) VerifyAnalyticsAPIKey(ctx context.Context, rawToken string) (*
 		return nil, nil, err
 	}
 
-	// Not cached on mismatch: caching a routing key under a slim record would
-	// strip its BYOK keys for the rest of the positive TTL.
-	if apiKey.Scope != ScopeAnalyticsRead {
+	if apiKey.Scope.Normalized() != scope {
 		return nil, nil, ErrWrongKeyScope
 	}
 
-	s.cache.Set(keyHash, CachedKey{APIKey: apiKey, Installation: installation})
+	// Only an analytics record is complete without BYOK keys; caching a slim
+	// routing record would strip them from inference for the positive TTL.
+	if scope == ScopeAnalyticsRead {
+		s.cache.Set(keyHash, CachedKey{APIKey: apiKey, Installation: installation})
+	}
 	s.fireMarkUsed(apiKey, installation)
 	return installation, apiKey, nil
 }

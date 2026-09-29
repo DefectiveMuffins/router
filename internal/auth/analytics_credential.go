@@ -25,3 +25,16 @@ func (v RoutingCredentialVerifier) VerifyAnalyticsCredential(ctx context.Context
 	}
 	return nil
 }
+
+// VerifyReadCredential authenticates an rk_ routing or ra_ analytics key for
+// installation-scoped read surfaces. It grants no routing admission.
+func (v RoutingCredentialVerifier) VerifyReadCredential(ctx context.Context, rawToken string) error {
+	if strings.HasPrefix(rawToken, AnalyticsAPIKeyPrefix+"_") {
+		return v.VerifyAnalyticsCredential(ctx, rawToken)
+	}
+	if !strings.HasPrefix(rawToken, APIKeyPrefix+"_") {
+		return ErrInvalidPrefix
+	}
+	_, _, err := v.VerifyRoutingCredential(ctx, rawToken)
+	return err
+}

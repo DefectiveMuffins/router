@@ -2561,18 +2561,24 @@ func (s *Service) MetricsSummary(ctx context.Context, installationID string, fro
 	return s.telemetry.GetTelemetrySummary(ctx, installationID, from, to)
 }
 
-// ErrSessionCostNotFound is returned for unknown, foreign, or not-yet-committed
-// sessions — deliberately indistinguishable so callers cannot probe foreign sessions.
-var ErrSessionCostNotFound = errors.New("no committed router telemetry for session")
+var (
+	// ErrSessionCostNotFound is returned for unknown, foreign, or not-yet-committed
+	// sessions — deliberately indistinguishable so callers cannot probe foreign sessions.
+	ErrSessionCostNotFound = errors.New("no committed router telemetry for session")
+	// ErrInvalidSessionID is returned for a session id outside the client-identifier contract.
+	ErrInvalidSessionID = errors.New("session id must be non-empty and at most 128 bytes")
+	// ErrSessionCostUnavailable is returned when this deployment has no telemetry storage.
+	ErrSessionCostUnavailable = errors.New("router telemetry storage is not configured")
+)
 
 // SessionCost returns the committed router cost of one client session, scoped
 // to the calling installation.
 func (s *Service) SessionCost(ctx context.Context, installationID, sessionID string) (SessionCost, error) {
-	if s.telemetry == nil {
-		return SessionCost{}, ErrSessionCostNotFound
-	}
 	if sessionID == "" || len(sessionID) > MaxClientIdentifierLen {
-		return SessionCost{}, ErrSessionCostNotFound
+		return SessionCost{}, ErrInvalidSessionID
+	}
+	if s.telemetry == nil {
+		return SessionCost{}, ErrSessionCostUnavailable
 	}
 	return s.telemetry.GetSessionCost(ctx, installationID, sessionID)
 }

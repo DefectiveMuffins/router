@@ -56,7 +56,7 @@ func readinessFixtureWithArtifacts(t *testing.T, environment policyregistry.Envi
 	signer, err := policyregistry.NewAssertionSigner([]byte(strings.Repeat("s", 32)), time.Now)
 	require.NoError(t, err)
 	store := readinessStore{bindingStore: bindingStore{binding: binding}, failure: registryError, artifactFailure: artifactError}
-	forwarder, err := gateway.NewHandler(credentialVerifier{}, &admissionStore{}, store, signer, readinessAuthorizer{iamError}, http.DefaultTransport, gateway.ProductSurfaces{Environment: environment, Analytics: &analyticsVerifier{}})
+	forwarder, err := gateway.NewHandler(credentialVerifier{}, &admissionStore{}, store, signer, readinessAuthorizer{iamError}, http.DefaultTransport, gateway.ProductSurfaces{Environment: environment, Analytics: &analyticsVerifier{}, Reads: &readVerifier{}})
 	require.NoError(t, err)
 	return forwarder
 }

@@ -49,6 +49,8 @@ const (
 	// feedbackTimeout bounds the no-login feedback link reads/writes. Both are
 	// single-row Postgres ops plus an async span emit, so 5s is generous.
 	feedbackTimeout = 5 * time.Second
+	// sessionCostTimeout bounds key verification plus one indexed aggregate.
+	sessionCostTimeout = 5 * time.Second
 	// analyticsTimeout bounds an export page. Keyset scans on a high-volume
 	// telemetry table warrant a batch-job budget, not an interactive one.
 	analyticsTimeout = 60 * time.Second
@@ -389,8 +391,16 @@ func RegisterWithFeatures(engine *gin.Engine, authSvc *auth.Service, proxySvc *p
 	passthroughGroup.GET("/v1/models/:model", anthropicapi.PassthroughHandler(proxySvc))
 	// Rides the passthrough group (cheap, no billing middleware) — read-only, no routing side-effects.
 	passthroughGroup.GET("/v1/display-settings", admin.DisplaySettingsHandler)
-	// Product surface (not admin): the Codex status hook's rk_ key needs the router's savings number.
-	passthroughGroup.GET("/v1/sessions/:session_id/cost", admin.SessionCostHandler(proxySvc))
+
+	// Read-only product surface: the Codex status hook's rk_ key and API clients'
+	// ra_ keys read one installation's committed cost. Deliberately outside
+	// serving admission and every billing gate.
+	sessionCostGroup := engine.Group("",
+		middleware.WithTimeout(sessionCostTimeout),
+		middleware.WithReadKey(authSvc),
+		middleware.WithInstallationRateLimit(middleware.SessionCostRequestsPerMinute, time.Now),
+	)
+	sessionCostGroup.GET("/v1/sessions/:session_id/cost", admin.SessionCostHandler(proxySvc))
 
 	routeMiddleware := []gin.HandlerFunc{
 		middleware.WithTimeout(routeTimeout),

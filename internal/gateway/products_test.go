@@ -45,6 +45,16 @@ func (v *analyticsVerifier) VerifyAnalyticsCredential(_ context.Context, token s
 	return v.err
 }
 
+type readVerifier struct {
+	tokens []string
+	err    error
+}
+
+func (v *readVerifier) VerifyReadCredential(_ context.Context, token string) error {
+	v.tokens = append(v.tokens, token)
+	return v.err
+}
+
 func TestFeedbackUsesOriginalBindingWithoutAdmissionOrInferenceAssertion(t *testing.T) {
 	var calls atomic.Int32
 	var observedBody string
@@ -61,7 +71,7 @@ func TestFeedbackUsesOriginalBindingWithoutAdmissionOrInferenceAssertion(t *test
 	defer worker.Close()
 	signer := feedback.NewSigner("feedback-secret", time.Hour)
 	lookup := &feedbackLookup{}
-	products := gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: &analyticsVerifier{}, Feedback: signer, Attribution: lookup}
+	products := gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: &analyticsVerifier{}, Reads: &readVerifier{}, Feedback: signer, Attribution: lookup}
 	forwarder, admissions, _ := gatewayFixture(t, worker, auth.ErrInvalidToken, errors.New("must not re-admit feedback"), products)
 	lookup.admission = admissions.admission
 	// The original activation may no longer be current; feedback must not read a head.
@@ -106,7 +116,7 @@ func TestFeedbackRejectsInvalidExpiredMissingOrForeignAttribution(t *testing.T) 
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			lookup := &feedbackLookup{err: test.err}
-			forwarder, admissions, _ := gatewayFixture(t, worker, nil, nil, gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: &analyticsVerifier{}, Feedback: signer, Attribution: lookup})
+			forwarder, admissions, _ := gatewayFixture(t, worker, nil, nil, gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: &analyticsVerifier{}, Reads: &readVerifier{}, Feedback: signer, Attribution: lookup})
 			lookup.admission = admissions.admission
 			lookup.admission.Target = test.target
 			w := httptest.NewRecorder()
@@ -122,7 +132,7 @@ func TestFeedbackBodyLimitAndDisabledFeature(t *testing.T) {
 	worker := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("unexpected dispatch") }))
 	defer worker.Close()
 	lookup := &feedbackLookup{}
-	products := gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: &analyticsVerifier{}, Feedback: feedback.NewSigner("feedback-secret", time.Hour), Attribution: lookup}
+	products := gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: &analyticsVerifier{}, Reads: &readVerifier{}, Feedback: feedback.NewSigner("feedback-secret", time.Hour), Attribution: lookup}
 	forwarder, _, _ := gatewayFixture(t, worker, nil, nil, products)
 	for _, body := range []string{strings.Repeat("x", 64*1024+1), "{", `{"token":123}`} {
 		w := httptest.NewRecorder()
@@ -148,7 +158,7 @@ func TestAnalyticsNeverUsesRoutingAdmissionOrAssertion(t *testing.T) {
 	}))
 	defer worker.Close()
 	analytics := &analyticsVerifier{}
-	forwarder, _, _ := gatewayFixture(t, worker, auth.ErrInvalidToken, errors.New("must not admit analytics"), gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: analytics})
+	forwarder, _, _ := gatewayFixture(t, worker, auth.ErrInvalidToken, errors.New("must not admit analytics"), gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: analytics, Reads: &readVerifier{}})
 	for _, path := range []string{"/v1/analytics/routing-decisions?limit=2", "/v1/analytics/models", "/v1/analytics/schema"} {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, path, nil)
@@ -165,13 +175,52 @@ func TestAnalyticsNeverUsesRoutingAdmissionOrAssertion(t *testing.T) {
 	assert.Equal(t, int32(3), calls.Load())
 }
 
+func TestSessionCostVerifiesEitherKeyWithoutAdmissionOrAssertion(t *testing.T) {
+	var calls atomic.Int32
+	seenPaths := make(chan string, 4)
+	worker := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		seenPaths <- r.URL.Path
+		assert.Empty(t, r.Header.Get(policyregistry.ServingAssertionHeader))
+		assert.Equal(t, "Bearer gateway-iam", r.Header.Get(policyregistry.ServerlessAuthorizationHeader))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer worker.Close()
+	reads := &readVerifier{}
+	analytics := &analyticsVerifier{err: errors.New("must not use the analytics-only verifier")}
+	forwarder, admissions, _ := gatewayFixture(t, worker, errors.New("must not verify a routing admission"), errors.New("must not admit a cost read"), gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: analytics, Reads: reads})
+	for _, request := range []struct{ header, value, token, path string }{
+		{"Authorization", "Bearer rk_routing", "rk_routing", "/v1/sessions/session-1/cost"},
+		{"X-API-Key", "ra_analytics", "ra_analytics", "/v1/sessions/session-1/cost"},
+		{auth.RouterKeyHeader, "rk_routing", "rk_routing", "/v1/sessions/session-1/cost"},
+		{"Authorization", "Bearer ra_analytics", "ra_analytics", "/v1/sessions//cost"},
+	} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, request.path, nil)
+		r.Header.Set(request.header, request.value)
+		r.Header.Set(policyregistry.ServingAssertionHeader, "spoofed")
+		forwarder.ServeHTTP(w, r)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, request.token, reads.tokens[len(reads.tokens)-1])
+		assert.Equal(t, request.path, <-seenPaths, "the gateway preserves the session path, including an empty id")
+	}
+	assert.Empty(t, admissions.seenConversation)
+	assert.Empty(t, analytics.token)
+
+	reads.err = auth.ErrWrongKeyScope
+	w := httptest.NewRecorder()
+	forwarder.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/sessions/session-1/cost", nil))
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, int32(4), calls.Load())
+}
+
 func TestPublicVersionAndFeedbackAssetsRemainKeyless(t *testing.T) {
 	worker := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Empty(t, r.Header.Get(policyregistry.ServingAssertionHeader))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer worker.Close()
-	forwarder, _, _ := gatewayFixture(t, worker, auth.ErrInvalidToken, errors.New("must not admit assets"), gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: &analyticsVerifier{err: auth.ErrInvalidToken}, Feedback: feedback.NewSigner("secret", 0), Attribution: &feedbackLookup{}})
+	forwarder, _, _ := gatewayFixture(t, worker, auth.ErrInvalidToken, errors.New("must not admit assets"), gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: &analyticsVerifier{err: auth.ErrInvalidToken}, Reads: &readVerifier{}, Feedback: feedback.NewSigner("secret", 0), Attribution: &feedbackLookup{}})
 	for _, path := range []string{"/v1/version", "/v1/feedback/assets/wooly-wave.png", "/v1/feedback/assets/weave.svg"} {
 		w := httptest.NewRecorder()
 		forwarder.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
@@ -215,8 +264,8 @@ func TestSubscriptionsPreserveMethodsAndBindAssertions(t *testing.T) {
 func TestGatewayProductWhitelistRejectsNestedAndUnknownPaths(t *testing.T) {
 	worker := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("unexpected dispatch") }))
 	defer worker.Close()
-	forwarder, _, _ := gatewayFixture(t, worker, nil, nil, gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: &analyticsVerifier{}})
-	for _, path := range []string{"/v1/models/", "/v1/models/a/b", "/v1/sessions/a/b/cost", "/v1/sessions//cost", "/v1/subscriptions/accounts/account/extra", "/v1/analytics/unknown", "/v1/feedback/link/token/nested", "/v1/feedback/assets/unknown", "/admin/v1/config"} {
+	forwarder, _, _ := gatewayFixture(t, worker, nil, nil, gateway.ProductSurfaces{Environment: policyregistry.EnvironmentProd, Analytics: &analyticsVerifier{}, Reads: &readVerifier{}})
+	for _, path := range []string{"/v1/models/", "/v1/models/a/b", "/v1/sessions/a/b/cost", "/v1/subscriptions/accounts/account/extra", "/v1/analytics/unknown", "/v1/feedback/link/token/nested", "/v1/feedback/assets/unknown", "/admin/v1/config"} {
 		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete} {
 			w := httptest.NewRecorder()
 			forwarder.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(`{}`)))

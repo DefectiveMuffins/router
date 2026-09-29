@@ -82,17 +82,13 @@ func run() error {
 	}
 	transport := newWorkerTransport()
 	defer transport.CloseIdleConnections()
-	products := gateway.ProductSurfaces{Environment: environment, Analytics: credentials, Feedback: feedback.NewSigner(config.GetOr("ROUTER_FEEDBACK_LINK_SECRET", ""), 0), Attribution: serving.FeedbackLookup{Queries: dbbudget.Queries(pool)}}
+	products := gateway.ProductSurfaces{Environment: environment, Analytics: credentials, Reads: credentials, Feedback: feedback.NewSigner(config.GetOr("ROUTER_FEEDBACK_LINK_SECRET", ""), 0), Attribution: serving.FeedbackLookup{Queries: dbbudget.Queries(pool)}}
 	forwarder, err := gateway.NewHandler(credentials, admissions, registry, signer, iam.Authorizer{}, transport, products)
 	if err != nil {
 		return err
 	}
-	mux := http.NewServeMux()
-	mux.Handle("/", forwarder)
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	mux.Handle("GET /readyz", forwarder.ReadinessHandler(pool.Ping))
-	mux.Handle("GET /startupz", forwarder.StartupHandler(pool.Ping))
-	server := &http.Server{Addr: ":" + config.GetOr("PORT", "8080"), Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 620 * time.Second, IdleTimeout: 90 * time.Second}
+	handler := gatewayHTTPHandler(forwarder, forwarder.ReadinessHandler(pool.Ping), forwarder.StartupHandler(pool.Ping))
+	server := &http.Server{Addr: ":" + config.GetOr("PORT", "8080"), Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 620 * time.Second, IdleTimeout: 90 * time.Second}
 	stopped := make(chan error, 1)
 	go func() { stopped <- server.ListenAndServe() }()
 	select {

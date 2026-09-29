@@ -27,11 +27,18 @@ type AnalyticsCredentialVerifier interface {
 	VerifyAnalyticsCredential(context.Context, string) error
 }
 
+// ReadCredentialVerifier accepts routing or analytics keys for installation-scoped
+// reads and, like AnalyticsCredentialVerifier, cannot mint an inference admission.
+type ReadCredentialVerifier interface {
+	VerifyReadCredential(context.Context, string) error
+}
+
 // ProductSurfaces supplies the independent credentials for existing non-inference endpoints.
 // A nil feedback signer retains the worker's feature-disabled behavior.
 type ProductSurfaces struct {
 	Environment policyregistry.Environment
 	Analytics   AnalyticsCredentialVerifier
+	Reads       ReadCredentialVerifier
 	Feedback    *feedback.Signer
 	Attribution FeedbackAdmissionLookup
 }
@@ -40,8 +47,8 @@ func (p ProductSurfaces) validate() error {
 	if err := policyregistry.ValidateEnvironment(p.Environment); err != nil {
 		return err
 	}
-	if p.Analytics == nil || p.Feedback != nil && p.Attribution == nil {
-		return errors.New("gateway product surfaces require analytics authentication and enabled feedback attribution")
+	if p.Analytics == nil || p.Reads == nil || p.Feedback != nil && p.Attribution == nil {
+		return errors.New("gateway product surfaces require analytics and read authentication and enabled feedback attribution")
 	}
 	return nil
 }
@@ -52,17 +59,10 @@ func (h *Handler) serveProductSurface(w http.ResponseWriter, r *http.Request) bo
 	}
 	switch {
 	case analyticsSurface(r):
-		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-		defer cancel()
-		r = r.Clone(ctx)
-		authCtx, authCancel := context.WithTimeout(ctx, 10*time.Second)
-		err := h.products.Analytics.VerifyAnalyticsCredential(authCtx, auth.RoutingTokenFromHeaders(r.Header))
-		authCancel()
-		if err != nil {
-			h.fail(w, r, requestcontext.ConversationChat, err)
-			return true
-		}
-		h.forwardDefault(w, r)
+		h.serveVerifiedRead(w, r, h.products.Analytics.VerifyAnalyticsCredential)
+		return true
+	case sessionCostSurface(r):
+		h.serveVerifiedRead(w, r, h.products.Reads.VerifyReadCredential)
 		return true
 	case feedbackSurface(r):
 		h.serveFeedback(w, r)
@@ -85,6 +85,30 @@ func analyticsSurface(r *http.Request) bool {
 	default:
 		return false
 	}
+}
+
+func sessionCostSurface(r *http.Request) bool {
+	if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/v1/sessions/") || !strings.HasSuffix(r.URL.Path, "/cost") {
+		return false
+	}
+	sessionID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/sessions/"), "/cost")
+	return sessionID == "" || singlePathParameter(r.URL.Path, "/v1/sessions/", "/cost")
+}
+
+// serveVerifiedRead forwards a read-only request to the default lane once its
+// credential verifies, with no admission or serving assertion.
+func (h *Handler) serveVerifiedRead(w http.ResponseWriter, r *http.Request, verify func(context.Context, string) error) {
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	r = r.Clone(ctx)
+	authCtx, authCancel := context.WithTimeout(ctx, 10*time.Second)
+	err := verify(authCtx, auth.RoutingTokenFromHeaders(r.Header))
+	authCancel()
+	if err != nil {
+		h.fail(w, r, requestcontext.ConversationChat, err)
+		return
+	}
+	h.forwardDefault(w, r)
 }
 
 func feedbackSurface(r *http.Request) bool {

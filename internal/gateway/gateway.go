@@ -203,7 +203,7 @@ func inferenceSurface(r *http.Request) (requestcontext.ConversationSurface, bool
 		case "/validate", "/v1/models", "/v1/display-settings", "/v1/router/models", "/v1/router/policies", "/v1/router/hmm-roster", "/v1/router/routing-distribution":
 			return requestcontext.ConversationChat, true
 		}
-		if singlePathParameter(r.URL.Path, "/v1/models/", "") || singlePathParameter(r.URL.Path, "/v1/sessions/", "/cost") {
+		if singlePathParameter(r.URL.Path, "/v1/models/", "") {
 			return requestcontext.ConversationChat, true
 		}
 	}
