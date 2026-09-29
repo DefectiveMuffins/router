@@ -1,0 +1,167 @@
+package admin_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"weave-os/router/internal/api/admin"
+	"weave-os/router/internal/policyregistry"
+	"weave-os/router/internal/router/hmm/rosterdata"
+	"weave-os/router/internal/server/middleware"
+)
+
+const discoveryProfileKey = "10000000-0000-4000-8000-000000000001"
+
+type discoveryPolicyReader struct {
+	current policyregistry.CurrentPolicy
+	target  policyregistry.ServingTarget
+	profile string
+	err     error
+}
+
+func (reader *discoveryPolicyReader) ReadCurrentPolicy(_ context.Context, target policyregistry.ServingTarget, profile string) (policyregistry.CurrentPolicy, error) {
+	reader.target, reader.profile = target, profile
+	if reader.err != nil {
+		return policyregistry.CurrentPolicy{}, reader.err
+	}
+	return reader.current, nil
+}
+
+func discoveryEngine(reader admin.CurrentPolicyReader) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.POST("/internal/v1/routing-discovery", middleware.WithInternalServiceAuth("test-token"), admin.InternalRoutingDiscoveryHandler(reader))
+	return engine
+}
+
+func discoveryRequest(body string, token string) *http.Request {
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/routing-discovery", strings.NewReader(body))
+	if token != "" {
+		request.Header.Set("X-Weave-Internal-Token", token)
+	}
+	return request
+}
+
+func discoveryFixture() *discoveryPolicyReader {
+	return &discoveryPolicyReader{current: policyregistry.CurrentPolicy{
+		Target: policyregistry.TargetStable, ProfileKey: discoveryProfileKey,
+		ActivationID: "active-1", SelectionSetSHA256: "selection-1", CandidateSHA256: "candidate-1", PolicySHA256: "policy-1",
+		Roster: &rosterdata.Roster{
+			SchemaVersion: rosterdata.SchemaVersionPolicyV1,
+			Ranking: rosterdata.Ranking{
+				Alpha: map[string]float64{"low": 0.5}, AlphaMin: map[string]float64{"low": 0.1},
+				AlphaMax: map[string]float64{"low": 0.9}, QualityBiasNeutral: 0.7,
+			},
+			Clusters: map[string]rosterdata.Cluster{"low": {
+				Arms:      []string{"openai/gpt-5.6-luna", "x-ai/grok-4.6"},
+				ArmScores: map[string]float64{"openai/gpt-5.6-luna": 10, "x-ai/grok-4.6": 9},
+				ArmIndices: map[string]rosterdata.ArmIndices{
+					"openai/gpt-5.6-luna": {WII: 80, WPI: 10}, "x-ai/grok-4.6": {WII: 60, WPI: 5},
+				},
+			}},
+		},
+	}}
+}
+
+func TestInternalRoutingDiscoveryRequiresTokenAndReturnsPolicyIdentity(t *testing.T) {
+	reader := discoveryFixture()
+	engine := discoveryEngine(reader)
+	body := `{"target":"prod/stable","profile_key":"` + discoveryProfileKey + `","grid":2}`
+	for _, token := range []string{"", "wrong-token"} {
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, discoveryRequest(body, token))
+		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+	}
+	assert.Empty(t, reader.target)
+
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, discoveryRequest(body, "test-token"))
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+	assert.Equal(t, policyregistry.TargetStable, reader.target)
+	assert.Equal(t, discoveryProfileKey, reader.profile)
+	var response struct {
+		ActivationID string `json:"activation_id"`
+		PolicySHA256 string `json:"policy_sha256"`
+		Clusters     []struct {
+			Arms   []string `json:"arms"`
+			Models []string `json:"models"`
+		} `json:"clusters"`
+		Distribution []json.RawMessage `json:"distribution"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "active-1", response.ActivationID)
+	assert.Equal(t, "policy-1", response.PolicySHA256)
+	require.Len(t, response.Clusters, 1)
+	assert.Equal(t, []string{"gpt-5.6-luna", "grok-4.6"}, response.Clusters[0].Models)
+	assert.Len(t, response.Distribution, 2)
+
+	reader.current.ActivationID = "active-2"
+	reader.current.PolicySHA256 = "policy-2"
+	recorder = httptest.NewRecorder()
+	engine.ServeHTTP(recorder, discoveryRequest(body, "test-token"))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "active-2", response.ActivationID)
+	assert.Equal(t, "policy-2", response.PolicySHA256)
+	recorder = httptest.NewRecorder()
+	engine.ServeHTTP(recorder, discoveryRequest(`{"target":"prod/stable","grid":101}`, "test-token"))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Len(t, response.Distribution, 101)
+}
+
+func TestInternalRoutingDiscoveryRejectsInvalidAndUnavailableRequests(t *testing.T) {
+	reader := discoveryFixture()
+	engine := discoveryEngine(reader)
+	for _, body := range []string{
+		`{}`, `{"target":"unknown"}`, `{"target":"prod/stable","profile_key":"not-a-uuid"}`,
+		`{"target":"prod/stable","grid":1}`, `{"target":"prod/stable","grid":102}`,
+		`{"target":"prod/stable","excluded_models":[""]}`,
+		`{"target":"prod/stable","excluded_models":["unknown-model"]}`,
+		`{"target":"prod/stable","excluded_providers":["unknown-provider"]}`,
+		`{"target":"prod/stable","excluded_models":["gpt-5.6-luna","gpt-5.6-luna"]}`,
+		`{"target":"prod/stable","unexpected":true}`,
+		`{"target":"prod/stable"}{"target":"prod/stable"}`,
+	} {
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, discoveryRequest(body, "test-token"))
+		assert.Equal(t, http.StatusBadRequest, recorder.Code, body)
+	}
+	oversized := `{"target":"prod/stable","excluded_models":["` + strings.Repeat("x", 17000) + `"]}`
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, discoveryRequest(oversized, "test-token"))
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	reader.err = errors.New("registry unavailable")
+	recorder = httptest.NewRecorder()
+	engine.ServeHTTP(recorder, discoveryRequest(`{"target":"prod/stable"}`, "test-token"))
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	reader.err = nil
+	recorder = httptest.NewRecorder()
+	engine.ServeHTTP(recorder, discoveryRequest(`{"target":"prod/stable","grid":2,"excluded_providers":["openai"]}`, "test-token"))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var providerProjection struct {
+		Distribution []struct {
+			Models []struct {
+				Model string `json:"model"`
+			} `json:"models"`
+		} `json:"distribution"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &providerProjection))
+	require.Len(t, providerProjection.Distribution, 2)
+	assert.Equal(t, "grok-4.6", providerProjection.Distribution[0].Models[0].Model)
+
+	recorder = httptest.NewRecorder()
+	engine.ServeHTTP(recorder, discoveryRequest(`{"target":"prod/stable","excluded_models":["gpt-5.6-luna","grok-4.6"]}`, "test-token"))
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
