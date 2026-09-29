@@ -8,6 +8,7 @@ import (
 	"weave-os/router/internal/router/cluster"
 	"weave-os/router/internal/router/hmm"
 	"weave-os/router/internal/router/hmm/rosterdata"
+	"weave-os/router/internal/router/policy"
 )
 
 const defaultDistributionGrid = 21
@@ -39,21 +40,12 @@ func RoutingDistribution(roster *rosterdata.Roster, gridN int, excludedModels, e
 			for _, arm := range clusterRoster.Arms {
 				baseRosterID, _ := hmm.SplitEffort(arm)
 				catalogID := hmm.CatalogIDForRoster(baseRosterID)
-				model, ok := catalog.ByID(catalogID)
+				binding, ok := EligibleBinding(catalogID, excludedModels, excludedProviders)
 				if !ok {
 					continue
 				}
-				provider := model.PrimaryProvider()
-				if _, excluded := excludedModels[catalogID]; excluded {
-					continue
-				}
-				if _, excluded := excludedProviders[provider]; excluded {
-					continue
-				}
 				candidates[baseRosterID] = struct{}{}
-				if len(model.Providers) > 0 {
-					prices[catalogID] = model.Providers[0].Price.InputUSDPer1M / 1000
-				}
+				prices[catalogID] = binding.Price.InputUSDPer1M / 1000
 			}
 			pick, _, ok := SelectGroupsWithPreference(
 				roster,
@@ -91,4 +83,23 @@ func RoutingDistribution(roster *rosterdata.Roster, gridN int, excludedModels, e
 		})
 	}
 	return points, nil
+}
+
+// EligibleBinding returns the first policy-allowed catalog binding that survives
+// the same model and provider exclusions used by managed request selection.
+func EligibleBinding(catalogID string, excludedModels, excludedProviders map[string]struct{}) (catalog.ProviderBinding, bool) {
+	if _, excluded := excludedModels[catalogID]; excluded {
+		return catalog.ProviderBinding{}, false
+	}
+	model, ok := catalog.ByID(catalogID)
+	if !ok {
+		return catalog.ProviderBinding{}, false
+	}
+	providerPolicy := policy.ManagedProviderPolicy()
+	for _, binding := range model.Providers {
+		if _, excluded := excludedProviders[binding.Provider]; !excluded && providerPolicy.Allows(binding.Provider) {
+			return binding, true
+		}
+	}
+	return catalog.ProviderBinding{}, false
 }

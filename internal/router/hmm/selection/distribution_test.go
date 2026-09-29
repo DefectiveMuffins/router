@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"weave-os/router/internal/providers"
 	"weave-os/router/internal/router/hmm/rosterdata"
 	"weave-os/router/internal/router/hmm/selection"
 )
@@ -46,6 +47,31 @@ func TestRoutingDistributionUsesLivePreferenceScorer(t *testing.T) {
 	compiledPoints, err := selection.RoutingDistribution(roster, 3, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, points, compiledPoints)
+}
+
+func TestRoutingDistributionUsesRemainingProviderBinding(t *testing.T) {
+	roster := &rosterdata.Roster{
+		SchemaVersion: rosterdata.SchemaVersionPolicyV1,
+		Ranking: rosterdata.Ranking{
+			Alpha: map[string]float64{"low": 0.5}, AlphaMin: map[string]float64{"low": 0.1},
+			AlphaMax: map[string]float64{"low": 0.9}, QualityBiasNeutral: 0.7,
+		},
+		Clusters: map[string]rosterdata.Cluster{"low": {
+			Arms:       []string{"anthropic/claude-haiku-4.5"},
+			ArmScores:  map[string]float64{"anthropic/claude-haiku-4.5": 1},
+			ArmIndices: map[string]rosterdata.ArmIndices{"anthropic/claude-haiku-4.5": {WII: 1, WPI: 1}},
+		}},
+	}
+	points, err := selection.RoutingDistribution(roster, 2, nil, map[string]struct{}{providers.ProviderAnthropic: {}})
+	require.NoError(t, err)
+	require.Len(t, points, 2)
+	assert.Equal(t, "claude-haiku-4-5", points[0].Models[0].Model)
+	assert.Equal(t, 0.001, points[0].ProjectedCostPer1KInputUSD)
+
+	_, err = selection.RoutingDistribution(roster, 2, nil, map[string]struct{}{
+		providers.ProviderAnthropic: {}, providers.ProviderAnthropicGateway: {}, providers.ProviderOpenAIGateway: {},
+	})
+	require.Error(t, err)
 }
 
 func TestRoutingDistributionHonorsExclusions(t *testing.T) {
