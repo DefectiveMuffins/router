@@ -184,7 +184,7 @@ func TestResolveAndInjectCredentials_RouterKeyedInboundCodexSubscription(t *test
 }
 
 func TestCodexSubscriptionCoversModel(t *testing.T) {
-	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol"} {
+	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6.1-sol"} {
 		assert.Truef(t, codexSubscriptionCoversModel(model), "%s must use the caller's Codex OAuth", model)
 	}
 	for _, model := range []string{"gpt-5.4-nano", "gpt-5.5", "gpt-4o", "gpt-5.6", ""} {
@@ -192,8 +192,26 @@ func TestCodexSubscriptionCoversModel(t *testing.T) {
 	}
 }
 
+func TestGenericOpenAIAliasesUseCodexSubscription(t *testing.T) {
+	for _, alias := range []string{"gpt", "openai", "sol"} {
+		t.Run(alias, func(t *testing.T) {
+			model, provider, known := resolveForceModel(alias)
+			require.True(t, known)
+			assert.Equal(t, "gpt-6.1-sol", model)
+			assert.Equal(t, providers.ProviderOpenAI, provider)
+
+			ctx := context.WithValue(context.Background(), OpenAISubscriptionContextKey{}, codexTestJWT)
+			ctx = context.WithValue(ctx, OpenAIAccountIDContextKey{}, "acct-999")
+			creds := CredentialsFromContext(resolveAndInjectCredentials(ctx, provider, model, http.Header{}))
+			require.NotNil(t, creds)
+			assert.Equal(t, credSourceCodexSubscription, creds.Source)
+			assert.Equal(t, []byte("acct-999"), creds.AccountID)
+		})
+	}
+}
+
 func TestResolveAndInjectCredentials_CodexCoverageIsModelScoped(t *testing.T) {
-	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol"} {
+	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6.1-sol"} {
 		t.Run(model+" uses Codex OAuth", func(t *testing.T) {
 			ctx := context.WithValue(context.Background(), InstallationIDContextKey{}, testInstallationID)
 			ctx = context.WithValue(ctx, ExternalAPIKeysContextKey{}, []*auth.ExternalAPIKey{
