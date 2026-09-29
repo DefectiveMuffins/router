@@ -66,6 +66,13 @@ draft preview. None of these commands build or publish classifier artifacts;
 private rosters, target assignments, ML code/data, and credentials remain
 outside this repository.
 
+Forward policy publication starts from reviewed roster JSON and runs through
+Go compilation and validation. WorkWeave's historical `build_aa_roster.py`
+recreates roster sources from private AA score snapshots and WII/WPI
+normalization assets for evaluation reproducibility; it does not publish a
+serving policy. Keeping that analysis with its private inputs does not create
+a second supported publication path.
+
 ## Configuration
 
 On the self-hosted/local roster path, `ROUTER_HMM_ROSTER_PATH` is required whenever

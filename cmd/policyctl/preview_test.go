@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -164,9 +165,23 @@ func TestDraftPreviewStaticHarnessPinsAndAlphaOverride(t *testing.T) {
 	assert.Equal(t, "openai/gpt-6-luna", overridden.Clusters["low"].Arms[0].Arm)
 }
 
-func TestRunPreviewUsesExplicitClassOrderWithoutRegistry(t *testing.T) {
+func TestRunPreviewUsesExplicitFiveClassOrderWithoutRegistry(t *testing.T) {
 	roster := previewRoster()
+	roster.SchemaVersion = rosterdata.SchemaVersionV75C
 	roster.ClassOrder = nil
+	cluster := roster.Clusters["low"]
+	labels := []string{"fast", "explore", "balanced", "high", "maximum"}
+	roster.Clusters = make(map[string]rosterdata.Cluster, len(labels))
+	roster.Ranking.Alpha = make(map[string]float64, len(labels))
+	roster.Ranking.AlphaMin = make(map[string]float64, len(labels))
+	roster.Ranking.AlphaMax = make(map[string]float64, len(labels))
+	for _, label := range labels {
+		cluster.ComplexityLabel = label
+		roster.Clusters[label] = cluster
+		roster.Ranking.Alpha[label] = 0.6
+		roster.Ranking.AlphaMin[label] = 0.1
+		roster.Ranking.AlphaMax[label] = 0.9
+	}
 	payload, err := json.Marshal(roster)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "draft.json")
@@ -176,7 +191,8 @@ func TestRunPreviewUsesExplicitClassOrderWithoutRegistry(t *testing.T) {
 	stdout := os.Stdout
 	os.Stdout = output
 	t.Cleanup(func() { os.Stdout = stdout })
-	runErr := runPreview([]string{"--roster-file", path, "--class-order", "low", "--environment", "staging-01", "--harness", "pi", "--grid", "2"})
+	assert.ErrorContains(t, runPreview([]string{"--roster-file", path}), "class order is required")
+	runErr := runPreview([]string{"--roster-file", path, "--class-order", strings.Join(labels, ","), "--environment", "staging-01", "--harness", "pi", "--grid", "2"})
 	os.Stdout = stdout
 	require.NoError(t, output.Close())
 	require.NoError(t, runErr)
@@ -186,7 +202,8 @@ func TestRunPreviewUsesExplicitClassOrderWithoutRegistry(t *testing.T) {
 	require.NoError(t, json.Unmarshal(encoded, &preview))
 	assert.Equal(t, path, preview.Source)
 	assert.Equal(t, "staging-01", preview.Environment)
-	assert.Len(t, preview.QualityGrid["low"], 2)
+	assert.Len(t, preview.Clusters, len(labels))
+	assert.Len(t, preview.QualityGrid["fast"], 2)
 	assert.Equal(t, string(rosterdata.HarnessPI), *preview.Harness)
 }
 
