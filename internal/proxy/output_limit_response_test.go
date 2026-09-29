@@ -95,6 +95,40 @@ func TestProxyOutputLimitAcrossResponsePaths(t *testing.T) {
 	}
 }
 
+func TestProxyGeminiTelemetryClassifiesOutputCap(t *testing.T) {
+	for _, capped := range []bool{false, true} {
+		t.Run(fmt.Sprintf("capped=%t", capped), func(t *testing.T) {
+			response := capWireResponse("gemini", false, capped)
+			provider := &fakeProvider{proxyResponse: func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(response))
+			}}
+			telem := newCaptureTelemetry()
+			svc := proxy.NewService(&fakeRouter{decision: router.Decision{Provider: providers.ProviderGoogle, Model: capGeminiModel, Reason: "fresh"}},
+				map[string]providers.Client{providers.ProviderGoogle: provider}, nil, false, nil, newFakePinStore(), false,
+				providers.ProviderGoogle, capGeminiModel, telem)
+			body := []byte(`{"contents":[{"role":"user","parts":[{"text":"Inspect the repository files"}]}],"generationConfig":{"maxOutputTokens":64000}}`)
+			require.NoError(t, svc.ProxyGeminiGenerateContent(authedCtx(uuid.NewString()), body, httptest.NewRecorder(),
+				httptest.NewRequest(http.MethodPost, "/v1beta/models/"+capGeminiModel+":generateContent", nil)))
+
+			select {
+			case <-telem.notify:
+			case <-time.After(2 * time.Second):
+				t.Fatal("gemini turn never persisted a telemetry row")
+			}
+			telem.mu.Lock()
+			defer telem.mu.Unlock()
+			require.NotEmpty(t, telem.rows)
+			want := proxy.TurnErrorClass("")
+			if capped {
+				want = proxy.TurnErrorMaxTokens
+			}
+			assert.Equal(t, want, telem.rows[len(telem.rows)-1].ErrorClass)
+		})
+	}
+}
+
 func capWireResponse(wire string, stream, capped bool) string {
 	switch wire {
 	case "anthropic":

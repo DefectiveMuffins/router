@@ -40,31 +40,31 @@ func (r *LLMEscalationRepo) Start(ctx context.Context, request llmescalation.Sta
 		return llmescalation.Session{}, errors.New("escalation cadence must be 3, 4, or 5")
 	}
 	session := llmescalation.Session{Scope: request.Scope, Lifetime: uuid.NewString(), InstallationID: request.InstallationID, Config: request.Config, InstructionFingerprint: request.InstructionFingerprint, Generation: 1}
+	encodedSession, err := json.Marshal(session)
+	if err != nil {
+		return llmescalation.Session{}, err
+	}
+	encodedFingerprint, err := json.Marshal(request.InstructionFingerprint)
+	if err != nil {
+		return llmescalation.Session{}, err
+	}
 	err = pgx.BeginFunc(ctx, dbbudget.NewDBTX(r.pool), func(tx pgx.Tx) error {
 		queries := dbbudget.Queries(tx)
 		if err := queries.DeleteExpiredLLMEscalationScope(ctx, request.Scope[:]); err != nil {
 			return err
 		}
-		encoded, err := json.Marshal(session)
+		if err := queries.InsertLLMEscalationSession(ctx, sqlc.InsertLLMEscalationSessionParams{Scope: request.Scope[:], Lifetime: uuid.MustParse(session.Lifetime), InstallationID: installationID, State: encodedSession}); err != nil {
+			return err
+		}
+		encodedState, err := queries.UpdateLLMEscalationSessionStart(ctx, sqlc.UpdateLLMEscalationSessionStartParams{Scope: request.Scope[:], Fingerprint: encodedFingerprint})
 		if err != nil {
 			return err
 		}
-		if err := queries.InsertLLMEscalationSession(ctx, sqlc.InsertLLMEscalationSessionParams{Scope: request.Scope[:], Lifetime: uuid.MustParse(session.Lifetime), InstallationID: installationID, State: encoded}); err != nil {
-			return err
-		}
-		session, err = lockedLLMSession(ctx, queries, request.Scope)
-		if err != nil {
+		if err := json.Unmarshal(encodedState, &session); err != nil {
 			return err
 		}
 		if session.InstallationID != request.InstallationID || session.Config != request.Config {
 			return errors.New("escalation scope configuration mismatch")
-		}
-		if session.InstructionFingerprint != request.InstructionFingerprint {
-			session.InstructionFingerprint = request.InstructionFingerprint
-			session.Generation++
-		}
-		if err := saveLLMSession(ctx, queries, session); err != nil {
-			return err
 		}
 		job, found, err := currentLLMJob(ctx, queries, session)
 		if err != nil {
@@ -81,22 +81,29 @@ func (r *LLMEscalationRepo) Start(ctx context.Context, request llmescalation.Sta
 // Complete deduplicates a successful response and atomically claims each cadence boundary.
 func (r *LLMEscalationRepo) Complete(ctx context.Context, request llmescalation.CompleteRequest) (llmescalation.Completion, error) {
 	completion := llmescalation.Completion{}
-	err := pgx.BeginFunc(ctx, dbbudget.NewDBTX(r.pool), func(tx pgx.Tx) error {
+	lifetime, err := uuid.Parse(request.Session.Lifetime)
+	if err != nil {
+		return completion, llmescalation.ErrStale
+	}
+	err = pgx.BeginFunc(ctx, dbbudget.NewDBTX(r.pool), func(tx pgx.Tx) error {
 		queries := dbbudget.Queries(tx)
-		session, err := lockedLLMSession(ctx, queries, request.Session.Scope)
+		inserted, err := queries.InsertLLMEscalationCompletion(ctx, sqlc.InsertLLMEscalationCompletionParams{
+			Scope: request.Session.Scope[:], Lifetime: lifetime, Generation: request.Session.Generation, Boundary: request.Boundary[:],
+		})
+		if err != nil {
+			return err
+		}
+		var session llmescalation.Session
+		if inserted == 0 {
+			session, err = sharedLLMSession(ctx, queries, request.Session.Scope)
+		} else {
+			session, err = mutationLLMSession(ctx, queries, request.Session.Scope)
+		}
 		if err != nil {
 			return err
 		}
 		if session.Lifetime != request.Session.Lifetime || session.Generation != request.Session.Generation {
 			return llmescalation.ErrStale
-		}
-		lifetime, err := uuid.Parse(session.Lifetime)
-		if err != nil {
-			return err
-		}
-		inserted, err := queries.InsertLLMEscalationCompletion(ctx, sqlc.InsertLLMEscalationCompletionParams{Lifetime: lifetime, Boundary: request.Boundary[:]})
-		if err != nil {
-			return err
 		}
 		completion.Session = session
 		if inserted == 0 {
@@ -170,7 +177,7 @@ func (r *LLMEscalationRepo) FinishJob(ctx context.Context, job llmescalation.Job
 	}
 	return pgx.BeginFunc(ctx, dbbudget.NewDBTX(r.pool), func(tx pgx.Tx) error {
 		queries := dbbudget.Queries(tx)
-		_, err := lockedLLMSession(ctx, queries, job.Scope)
+		_, err := queries.GetLLMEscalationSessionShared(ctx, job.Scope[:])
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -206,7 +213,7 @@ func (r *LLMEscalationRepo) Apply(ctx context.Context, request llmescalation.App
 	}
 	err := pgx.BeginFunc(ctx, dbbudget.NewDBTX(r.pool), func(tx pgx.Tx) error {
 		queries := dbbudget.Queries(tx)
-		session, err := lockedLLMSession(ctx, queries, request.Session.Scope)
+		session, err := mutationLLMSession(ctx, queries, request.Session.Scope)
 		if err != nil {
 			return err
 		}
@@ -253,7 +260,7 @@ func (r *LLMEscalationRepo) Apply(ctx context.Context, request llmescalation.App
 func (r *LLMEscalationRepo) RecordNoTarget(ctx context.Context, request llmescalation.ApplyRequest) error {
 	return pgx.BeginFunc(ctx, dbbudget.NewDBTX(r.pool), func(tx pgx.Tx) error {
 		queries := dbbudget.Queries(tx)
-		session, err := lockedLLMSession(ctx, queries, request.Session.Scope)
+		session, err := sharedLLMSession(ctx, queries, request.Session.Scope)
 		if err != nil {
 			return err
 		}
@@ -280,8 +287,17 @@ func (r *LLMEscalationRepo) RecordNoTarget(ctx context.Context, request llmescal
 	})
 }
 
-func lockedLLMSession(ctx context.Context, queries *sqlc.Queries, scope [32]byte) (llmescalation.Session, error) {
-	encoded, err := queries.GetLLMEscalationSessionLocked(ctx, scope[:])
+func mutationLLMSession(ctx context.Context, queries *sqlc.Queries, scope [32]byte) (llmescalation.Session, error) {
+	encoded, err := queries.GetLLMEscalationSessionForMutation(ctx, scope[:])
+	if err != nil {
+		return llmescalation.Session{}, err
+	}
+	var session llmescalation.Session
+	err = json.Unmarshal(encoded, &session)
+	return session, err
+}
+func sharedLLMSession(ctx context.Context, queries *sqlc.Queries, scope [32]byte) (llmescalation.Session, error) {
+	encoded, err := queries.GetLLMEscalationSessionShared(ctx, scope[:])
 	if err != nil {
 		return llmescalation.Session{}, err
 	}

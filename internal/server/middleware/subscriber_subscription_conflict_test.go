@@ -16,10 +16,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestWithSubscriberAllowance_MaxIgnoresLinkedSubscriptionAndHoldsAllowance(t *testing.T) {
+func TestWithSubscriberAllowance_MaxIgnoresLinkedSubscriptionAndUsesAllowance(t *testing.T) {
 	for _, route := range []struct {
 		path     string
 		provider auth.SubscriptionProvider
@@ -38,6 +37,7 @@ func TestWithSubscriberAllowance_MaxIgnoresLinkedSubscriptionAndHoldsAllowance(t
 				).WithClock(func() time.Time { return allowanceNow })
 				organizationBilling := &stubBillingRepo{balance: 5_000_000}
 				var subscriptionOnly bool
+				var coverage entitlement.Coverage
 				dispatched := false
 				engine := gin.New()
 				engine.Use(func(c *gin.Context) {
@@ -49,6 +49,7 @@ func TestWithSubscriberAllowance_MaxIgnoresLinkedSubscriptionAndHoldsAllowance(t
 				engine.POST(route.path, func(c *gin.Context) {
 					dispatched = true
 					subscriptionOnly = billing.SubscriptionOnlyFromContext(c.Request.Context())
+					coverage, _ = entitlement.CoverageFromContext(c.Request.Context())
 					c.Status(http.StatusOK)
 				})
 
@@ -67,8 +68,7 @@ func TestWithSubscriberAllowance_MaxIgnoresLinkedSubscriptionAndHoldsAllowance(t
 				assert.Equal(t, http.StatusOK, response.Code)
 				assert.True(t, dispatched)
 				assert.False(t, subscriptionOnly)
-				require.Len(t, allowances.held, 1)
-				assert.Equal(t, []string{allowances.held[0].ActionID}, allowances.released)
+				assert.Equal(t, entitlement.PlanMax, coverage.Plan)
 			})
 		}
 	}
@@ -94,6 +94,4 @@ func TestWithSubscriberAllowance_MaxExplicitSubscriptionOptOutUsesAllowance(t *t
 
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.True(t, dispatched)
-	require.Len(t, allowances.held, 1)
-	assert.Equal(t, []string{allowances.held[0].ActionID}, allowances.released)
 }

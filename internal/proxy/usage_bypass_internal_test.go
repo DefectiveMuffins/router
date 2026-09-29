@@ -726,6 +726,8 @@ func TestBypass_PersistsTelemetryRowWithUnifiedHeaders(t *testing.T) {
 	require.NotNil(t, row.CohortTreatmentApplied)
 	assert.False(t, *row.CohortTreatmentApplied)
 	assert.Equal(t, string(turntype.MainLoop), row.TurnType)
+	routedKey := deriveSessionKeyForRequest(ctx, env, apiKeyIDFromContext(ctx))
+	assert.Equal(t, routedKey[:], row.SessionKey, "bypass replies must advance the same session turn clock as routed replies")
 	require.NotNil(t, row.UnifiedLimitHeaders, "captured unified headers must reach the telemetry row")
 	var headers map[string]string
 	require.NoError(t, json.Unmarshal(row.UnifiedLimitHeaders, &headers))
@@ -755,4 +757,31 @@ func TestBypass_NoTelemetryRowWithoutInstallation(t *testing.T) {
 		t.Fatal("no installation on ctx -> no telemetry row expected")
 	case <-time.After(200 * time.Millisecond):
 	}
+}
+
+func TestBypass_TelemetryRowClassifiesOutputCap(t *testing.T) {
+	upstream := &bypassFakeProvider{respBody: `{"type":"message","role":"assistant","content":[{"type":"text","text":"partial"}],` +
+		`"stop_reason":"max_tokens","usage":{"input_tokens":3,"output_tokens":5}}`}
+	svc := newBypassService(upstream)
+	sink := newBypassCaptureTelemetry()
+	svc.telemetry = sink
+
+	env := bypassAnthropicEnvelope(t)
+	feats := env.RoutingFeatures(false)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(""))
+	ctx := context.WithValue(context.Background(), InstallationIDContextKey{}, uuid.New().String())
+
+	err := svc.bypassToAnthropic(ctx, env, feats, false, time.Now(), "req-tel-3", "ext-1", turntype.MainLoop, "usage_bypass", req, rec)
+	require.NoError(t, err)
+
+	select {
+	case <-sink.notify:
+	case <-time.After(2 * time.Second):
+		t.Fatal("bypass turn never persisted a telemetry row")
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	require.Len(t, sink.rows, 1)
+	assert.Equal(t, TurnErrorMaxTokens, sink.rows[0].ErrorClass, "a bypass reply cut off at its output cap is classified like a routed one")
 }

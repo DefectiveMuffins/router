@@ -57,7 +57,6 @@ type fakeAllowances struct {
 	usageErr        error
 
 	reserveErr   error
-	exhausted    entitlement.PeriodKind
 	finalizeErr  error
 	storedState  entitlement.ActionState
 	reservations []entitlement.Reservation
@@ -75,14 +74,6 @@ func (f *fakeAllowances) Reserve(_ context.Context, reservation entitlement.Rese
 		state = entitlement.ActionStateReserved
 	}
 	return entitlement.Action{Reservation: reservation, State: state}, nil
-}
-
-func (f *fakeAllowances) ReserveWithinLimits(ctx context.Context, reservation entitlement.Reservation) (entitlement.Action, error) {
-	if f.exhausted != "" {
-		f.reservations = append(f.reservations, reservation)
-		return entitlement.Action{}, entitlement.ExhaustedError{Period: f.exhausted}
-	}
-	return f.Reserve(ctx, reservation)
 }
 
 func (f *fakeAllowances) Finalize(_ context.Context, finalization entitlement.Finalization) (entitlement.Action, error) {
@@ -284,25 +275,6 @@ func TestAdmitReportsExhaustedWindow(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, entitlement.AdmissionExhausted, admission.Outcome)
 			assert.Equal(t, testCase.expected, admission.ExhaustedPeriod)
-		})
-	}
-}
-
-func TestAdmissionHeldCapacityOnly(t *testing.T) {
-	for name, testCase := range map[string]struct {
-		allowances *fakeAllowances
-		wantHeld   bool
-	}{
-		"only outstanding holds reached cap": {allowances: &fakeAllowances{sixHourReserved: maxSixHour}, wantHeld: true},
-		"mixed settled and held":             {allowances: &fakeAllowances{sixHourFinal: 100, sixHourReserved: maxSixHour - 100}, wantHeld: true},
-		"already settled":                    {allowances: &fakeAllowances{sixHourFinal: maxSixHour}},
-		"month settled while hour held":      {allowances: &fakeAllowances{billingFinal: maxMonthly, sixHourReserved: maxSixHour}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			admission, err := newService(&fakeEntitlements{current: activeEntitlement(), found: true}, testCase.allowances).
-				Admit(context.Background(), testSubscriber)
-			require.NoError(t, err)
-			assert.Equal(t, testCase.wantHeld, admission.HeldCapacityOnly())
 		})
 	}
 }

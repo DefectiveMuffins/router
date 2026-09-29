@@ -2013,7 +2013,12 @@ INSERT INTO router.model_router_request_telemetry (
     serving_profile_version,
     serving_release_id,
     serving_binding_id,
-    boost_optimizer_version
+    boost_optimizer_version,
+    user_prompt,
+    user_prompt_gap_ms,
+    user_prompt_gap_prior_model,
+    error_class,
+    latest_tool_call_counts
 ) VALUES (
     $1::uuid,
     $2::uuid,
@@ -2171,7 +2176,12 @@ INSERT INTO router.model_router_request_telemetry (
     $154::varchar,
     $155::varchar,
     $156::varchar,
-    $157::varchar
+    $157::varchar,
+    $158::boolean,
+    $159::bigint,
+    $160::varchar,
+    $161::varchar,
+    $162::jsonb
 )
 ON CONFLICT (installation_id, request_id, span_type) DO NOTHING
 `
@@ -2334,6 +2344,11 @@ type InsertRequestTelemetryParams struct {
 	ServingReleaseID                         *string
 	ServingBindingID                         *string
 	BoostOptimizerVersion                    *string
+	UserPrompt                               *bool
+	UserPromptGapMs                          *int64
+	UserPromptGapPriorModel                  *string
+	ErrorClass                               *string
+	LatestToolCallCounts                     []byte
 }
 
 // Records a completed proxied request for the dashboard UI and routing
@@ -2382,6 +2397,15 @@ type InsertRequestTelemetryParams struct {
 // level, the level that won precedence, the level written on the wire after
 // the target menu clamp, and which precedence branch produced it. NULL when
 // the target expresses no effort.
+// user_prompt marks a turn whose trailing input is text a person typed rather
+// than a tool result or harness notice; user_prompt_gap_ms is how long after
+// the session's previous response finished that prompt arrived, and
+// user_prompt_gap_prior_model is the model that served that response. The gap
+// is NULL on the session's first prompt and when the previous response
+// overlapped this one. error_class buckets how the turn failed (NULL on a
+// normal completion). latest_tool_call_counts is {tool: {calls, errors}} over
+// only the tool results this request delivered, unlike tool_error_counts,
+// which re-counts the whole history on every turn.
 //
 //	INSERT INTO router.model_router_request_telemetry (
 //	    installation_id,
@@ -2540,7 +2564,12 @@ type InsertRequestTelemetryParams struct {
 //	    serving_profile_version,
 //	    serving_release_id,
 //	    serving_binding_id,
-//	    boost_optimizer_version
+//	    boost_optimizer_version,
+//	    user_prompt,
+//	    user_prompt_gap_ms,
+//	    user_prompt_gap_prior_model,
+//	    error_class,
+//	    latest_tool_call_counts
 //	) VALUES (
 //	    $1::uuid,
 //	    $2::uuid,
@@ -2698,7 +2727,12 @@ type InsertRequestTelemetryParams struct {
 //	    $154::varchar,
 //	    $155::varchar,
 //	    $156::varchar,
-//	    $157::varchar
+//	    $157::varchar,
+//	    $158::boolean,
+//	    $159::bigint,
+//	    $160::varchar,
+//	    $161::varchar,
+//	    $162::jsonb
 //	)
 //	ON CONFLICT (installation_id, request_id, span_type) DO NOTHING
 func (q *Queries) InsertRequestTelemetry(ctx context.Context, arg InsertRequestTelemetryParams) error {
@@ -2860,6 +2894,11 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, arg InsertRequestT
 		arg.ServingReleaseID,
 		arg.ServingBindingID,
 		arg.BoostOptimizerVersion,
+		arg.UserPrompt,
+		arg.UserPromptGapMs,
+		arg.UserPromptGapPriorModel,
+		arg.ErrorClass,
+		arg.LatestToolCallCounts,
 	)
 	return err
 }

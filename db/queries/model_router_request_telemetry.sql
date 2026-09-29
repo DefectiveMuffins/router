@@ -44,6 +44,15 @@
 -- level, the level that won precedence, the level written on the wire after
 -- the target menu clamp, and which precedence branch produced it. NULL when
 -- the target expresses no effort.
+-- user_prompt marks a turn whose trailing input is text a person typed rather
+-- than a tool result or harness notice; user_prompt_gap_ms is how long after
+-- the session's previous response finished that prompt arrived, and
+-- user_prompt_gap_prior_model is the model that served that response. The gap
+-- is NULL on the session's first prompt and when the previous response
+-- overlapped this one. error_class buckets how the turn failed (NULL on a
+-- normal completion). latest_tool_call_counts is {tool: {calls, errors}} over
+-- only the tool results this request delivered, unlike tool_error_counts,
+-- which re-counts the whole history on every turn.
 -- name: InsertRequestTelemetry :exec
 INSERT INTO router.model_router_request_telemetry (
     installation_id,
@@ -202,7 +211,12 @@ INSERT INTO router.model_router_request_telemetry (
     serving_profile_version,
     serving_release_id,
     serving_binding_id,
-    boost_optimizer_version
+    boost_optimizer_version,
+    user_prompt,
+    user_prompt_gap_ms,
+    user_prompt_gap_prior_model,
+    error_class,
+    latest_tool_call_counts
 ) VALUES (
     @installation_id::uuid,
     sqlc.narg('api_key_id')::uuid,
@@ -360,7 +374,12 @@ INSERT INTO router.model_router_request_telemetry (
     sqlc.narg('serving_profile_version')::varchar,
     sqlc.narg('serving_release_id')::varchar,
     sqlc.narg('serving_binding_id')::varchar,
-    sqlc.narg('boost_optimizer_version')::varchar
+    sqlc.narg('boost_optimizer_version')::varchar,
+    sqlc.narg('user_prompt')::boolean,
+    sqlc.narg('user_prompt_gap_ms')::bigint,
+    sqlc.narg('user_prompt_gap_prior_model')::varchar,
+    sqlc.narg('error_class')::varchar,
+    sqlc.narg('latest_tool_call_counts')::jsonb
 )
 ON CONFLICT (installation_id, request_id, span_type) DO NOTHING;
 

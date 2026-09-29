@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -64,14 +65,14 @@ func run() error {
 		return err
 	}
 	defer pool.Close()
-	startupCtx, startupCancel := context.WithTimeout(ctx, 10*time.Second)
-	defer startupCancel()
-	if err := pool.Ping(startupCtx); err != nil {
+	if err := waitForStartupPostgres(ctx, observability.FromContext(ctx), pool.Ping); err != nil {
 		return err
 	}
-	registry, err := policyregistry.NewGCSRegistry(startupCtx, config.MustGet("ROUTER_SERVING_REGISTRY_URI"))
+	registryCtx, registryCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer registryCancel()
+	registry, err := policyregistry.NewGCSRegistry(registryCtx, config.MustGet("ROUTER_SERVING_REGISTRY_URI"))
 	if err != nil {
-		return err
+		return fmt.Errorf("initialize gateway policy registry: %w", err)
 	}
 	defer registry.Close()
 	credentials := auth.RoutingCredentialVerifier{Keys: serving.CredentialLookup{Queries: dbbudget.Queries(pool)}}

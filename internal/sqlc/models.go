@@ -629,27 +629,32 @@ type RouterModelRouterRequestTelemetry struct {
 	// Effort level written on the wire after the target menu clamp (xhigh -> max -> high). NULL when nothing was sent.
 	EffortSent *string
 	// Precedence branch that produced the level: user, escalation, arm, model_policy. NULL when no effort resolved.
-	EffortSource           *string
-	SubscriberPlan         *string
-	EntitlementVersion     *int64
-	CapacitySource         *string
-	RetailUsageUsdMicros   *int64
-	IncludedUsageUsdMicros *int64
-	LinkedUsageUsdMicros   *int64
-	PrepaidUsageUsdMicros  *int64
-	SettlementFailed       *bool
-	ServingProfileID       *string
-	ServingProfileVersion  *string
-	ServingReleaseID       *string
-	ServingBindingID       *string
-	BoostOptimizerVersion  *string
-	CohortExperimentID     pgtype.UUID
-	CohortGroupID          *int16
-	CohortPhaseIndex       *int16
-	CohortRevision         *int32
-	CohortScheduledArm     *string
-	CohortTreatmentApplied *bool
-	CohortBypassReason     *string
+	EffortSource            *string
+	SubscriberPlan          *string
+	EntitlementVersion      *int64
+	CapacitySource          *string
+	RetailUsageUsdMicros    *int64
+	IncludedUsageUsdMicros  *int64
+	LinkedUsageUsdMicros    *int64
+	PrepaidUsageUsdMicros   *int64
+	SettlementFailed        *bool
+	ServingProfileID        *string
+	ServingProfileVersion   *string
+	ServingReleaseID        *string
+	ServingBindingID        *string
+	BoostOptimizerVersion   *string
+	CohortExperimentID      pgtype.UUID
+	CohortGroupID           *int16
+	CohortPhaseIndex        *int16
+	CohortRevision          *int32
+	CohortScheduledArm      *string
+	CohortTreatmentApplied  *bool
+	CohortBypassReason      *string
+	UserPrompt              *bool
+	UserPromptGapMs         *int64
+	UserPromptGapPriorModel *string
+	ErrorClass              *string
+	LatestToolCallCounts    []byte
 }
 
 type RouterModelRouterSubscriptionAccount struct {
@@ -977,6 +982,14 @@ type RouterSessionStrategyPreference struct {
 	SessionKey     []byte
 	Strategy       string
 	Enabled        bool
+}
+
+type RouterSessionTurnClock struct {
+	InstallationID      uuid.UUID
+	SessionKey          []byte
+	LastResponseEndedAt pgtype.Timestamptz
+	LastServedModel     string
+	UpdatedAt           pgtype.Timestamptz
 }
 
 // Shadow-mode spiral (death-march) detections: log-only fire-rate corpus measured on live traffic before escalation is armed

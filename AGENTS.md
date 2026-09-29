@@ -2,7 +2,28 @@
 
 > **Mirror notice.** Generated from [CLAUDE.md](CLAUDE.md). Edit CLAUDE.md, then run `make generate-agent-guides`; CI rejects drift.
 
-Root guide for AI agents in the `router/` subproject. Covers cross-cutting design + the layer model. **First read for any task:** [README](README.md), then this file. Then read the `CLAUDE.md` inside the package you're editing — each subpackage has its own with focused recipes + invariants.
+Root guide for AI agents in the `router/` subproject. Start here, then read the guide for the affected package. The [README](README.md) covers product setup, not required incident context.
+
+## Production incident entrypoint
+
+For a router repair, establish a synthetic failing regression before changing behavior
+and run it unchanged against the fix. For diagnosis-only requests, investigate without editing. Identify the incident-time
+serving revision and configuration before applying current source assumptions. A local
+repair does not authorize production mutation or establish production recovery.
+
+| Symptom | Owning code and context | Initial regression boundary |
+| --- | --- | --- |
+| Tool/schema rejection | [translation](internal/translate/CLAUDE.md), [providers](internal/providers/CLAUDE.md), `internal/proxy/dispatch_error.go` | Translation unit test, then provider conformance |
+| Retry, fallback, truncated stream | [proxy](internal/proxy/CLAUDE.md), `internal/dispatch`, `internal/sse`, [inference boundary](docs/INFERENCE_BOUNDARY.md) | Dispatch/SSE behavior, stream-commit and cancellation invariants |
+| Wrong model or session pin | [routing](internal/router/CLAUDE.md), [Go HMM selection](docs/HMM_GO_SELECTION.md), [session pins](internal/router/sessionpin/CLAUDE.md) | Eligibility, policy selection and pin transitions |
+| Authentication or charges | [auth](internal/auth/CLAUDE.md), `internal/billing`, [composition](cmd/CLAUDE.md) | Credential isolation, entitlement and exactly-once accounting |
+| Admission or release | `internal/gateway`, `internal/policyregistry`, [serving control](docs/SERVING_CONTROL.md) | Admission and immutable identity checks |
+| Client setup or UI | `install/`, `frontend/`, [contributing](CONTRIBUTING.md) | Offline installer tests or frontend checks |
+
+Run `python3 scripts/agent_checks.py doctor` and `plan --base origin/main` from this
+root for read-only prerequisite and suite discovery. Missing required checks remain
+blocked; do not report local checks as complete CI. Keep private incident notes in
+ignored `.context/`; only authored, synthetic reproductions belong in public fixtures.
 
 ## Engineering principles
 
@@ -156,7 +177,9 @@ Pick by responsibility, then read that package's `CLAUDE.md`:
 |---|---|---|
 | HTTP endpoint (handler + route) | `internal/api/<group>/` | [internal/api/CLAUDE.md](internal/api/CLAUDE.md) |
 | Identity / API-key logic | `internal/auth` (method on `*Service`) | [internal/auth/CLAUDE.md](internal/auth/CLAUDE.md) |
-| Routing / dispatch / per-action orchestration | `internal/proxy` (method on `*Service`) | [internal/proxy/CLAUDE.md](internal/proxy/CLAUDE.md) |
+| Per-action orchestration | `internal/proxy` (method on `*Service`) | [internal/proxy/CLAUDE.md](internal/proxy/CLAUDE.md) |
+| Execution authorization / provider attempts | `internal/router/policy` / `internal/dispatch` | [docs/INFERENCE_BOUNDARY.md](docs/INFERENCE_BOUNDARY.md) |
+| Managed admission / release identity | `internal/gateway` / `internal/policyregistry` | [docs/SERVING_CONTROL.md](docs/SERVING_CONTROL.md) |
 | Balance check / inference debit | `internal/billing` (method on `*Service`) | — |
 | Feedback-link token signing (no I/O) | `internal/feedback` | — |
 | Routing-decision export row shape / cursor / schema | `internal/analytics` | — |
@@ -208,7 +231,7 @@ If new helper doesn't fit, justify new package in code comment before creating.
 - Use `testify/assert` + `testify/require`. Use `require.Eventually` for async (see [service_test.go](internal/auth/service_test.go) `fireMarkUsed` assertion).
 - In-memory fakes for repos/routers/provider clients are cheap + far better than mocks for unit testing Service.
 - No DB-backed integration tests in `internal/`. If need real Postgres, `docker compose` stack is runtime fixture; write scripts under `scripts/` rather than `*_test.go`.
-- **Pre-merge end-to-end smoke suite** (`smoke/`, `smoke` build tag) boots the real router against real upstream providers via a record/replay MITM proxy — catches what unit/conformance tests can't see (real provider acceptance of translated wire formats, prompt-cache accounting, SSE lifecycle). Path-gated in CI to `internal/proxy/**`, `internal/translate/**`, `internal/providers/**`, `internal/router/catalog/**`, `cmd/router/**`. Add a scenario when a change touches one of those surfaces AND the bug class needs a real upstream call to catch (wire-format translation, dispatch error classification, streaming order) — not for pure unit-testable logic already covered elsewhere. See [docs/SMOKE.md](docs/SMOKE.md) for when it runs, how to add a scenario, and how to refresh cassettes.
+- **Pre-merge end-to-end smoke suite** (`smoke/`, `smoke` build tag) boots an isolated real router behind a record/replay MITM proxy. Local and PR runs replay recorded synthetic provider responses without provider keys; only explicit recording checks live provider acceptance. The shared selector in `scripts/agent_checks.py` includes request-path packages, dispatch/policy/SSE, gateway and build inputs. Add a scenario for stack-level wire/stream/cache behavior not already established by a smaller test. See [docs/SMOKE.md](docs/SMOKE.md) for isolation, scenario creation, recording and privacy constraints.
 
 ### Logging
 
@@ -251,7 +274,7 @@ A helper that logs on the request path takes `ctx` and calls `observability.From
 `ROUTER_DEPLOYMENT_MODE` read at boot in `cmd/router/main.go`:
 
 - **`selfhosted`** (default): full dashboard at `/ui/*`, `/admin/v1/*` API (auth, metrics, keys, provider-keys, config, excluded-models), dashboard cookie auth all mounted. Provider keys read from env vars; missing keys keep providers registered for client-passthrough but exclude from hard-pin resolution.
-- **`managed`**: dashboard + `/admin/v1/*` not mounted at all — Weave-managed deploys have separate control plane. Every provider registered with empty deployment key; proxy service in BYOK-only mode, so request without BYOK or client-supplied auth for chosen provider 400s rather than silently spending platform budget. Setting variable to any other value panics at boot. BYOK is **opt-in per installation** here (`byok_enabled` on the installation row, set by the control plane): until it's set, `withAPIKey` strips external keys so a stored key can't spend against a credit-billed deployment. An opted-in BYOK turn debits no inference cost; a platform fee (`BYOK_FEE_RATE`, default 0) may be charged as a separate `byok_fee` ledger row.
+- **`managed`**: dashboard + `/admin/v1/*` not mounted; the control plane is separate. Billing is enabled when its tables exist (a transient billing health-check error also keeps billing enabled). With billing, deployment keys are loaded and platform requests are balance-gated. Only a managed deployment without billing stays BYOK-only and registers empty deployment keys. Inspect `cmd/router/main.go` and the incident's boot configuration rather than inferring credentials from the mode alone. Any other mode value panics at boot. BYOK remains **opt-in per installation** (`byok_enabled`): `withAPIKey` strips external keys until enabled; opted-in BYOK debits no inference cost, though `BYOK_FEE_RATE` may add a separate platform-fee ledger row.
 
 When adding new endpoint, put inside `selfhosted` block in `server.Register` unless part of product surface (`/v1/*`, `/v1beta/*`, `/health`, `/validate`). Do not re-expose admin surface in managed mode.
 

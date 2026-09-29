@@ -85,7 +85,7 @@ func TestWithSubscriberProductScope_StampsDryRunsWithoutAllowanceAccounting(t *t
 			require.True(t, scoped)
 			assert.Equal(t, entitlement.PlanMax, plan)
 			assert.Zero(t, allowances.usageReads)
-			assert.Empty(t, allowances.held)
+			assert.Zero(t, allowances.writes)
 		})
 	}
 }
@@ -202,7 +202,8 @@ func TestWithSubscriberAllowance_ScopesAgentShadowWithoutSpendingAllowance(t *te
 	engine.ServeHTTP(httptest.NewRecorder(), req)
 
 	require.True(t, reached, "a shadow evaluation is not refused by a spent allowance")
-	assert.Empty(t, spent.held, "a shadow evaluation holds nothing against the allowance")
+	_, covered := entitlement.CoverageFromContext(observed)
+	assert.False(t, covered, "a shadow evaluation draws nothing against the allowance")
 	assert.False(t, billing.SubscriptionOnlyFromContext(observed), "shadow traffic must not use a subscriber's linked credential")
 	plan, scoped := entitlement.ProductScopeFromContext(observed)
 	require.True(t, scoped)

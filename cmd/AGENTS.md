@@ -26,13 +26,13 @@ Composition root. Only place that constructs concrete adapters + wires them toge
 `ROUTER_DEPLOYMENT_MODE` is read at boot:
 
 - `selfhosted` (default): mounts dashboard at `/ui/*`, `/admin/v1/*` API, dashboard cookie auth. Provider keys read from env vars.
-- `managed`: dashboard + `/admin/v1/*` not mounted. Every provider registered with empty deployment key; proxy in BYOK-only mode.
+- `managed`: dashboard + `/admin/v1/*` not mounted. Billing-backed managed deployments load platform keys and enforce balance checks. Only managed deployments without billing remain BYOK-only with empty deployment keys; a billing boot-check error defaults to billing-enabled, not BYOK-only.
 - Any other value → panic at boot.
 
 Provider registration:
 
 - Every provider goes into `providerMap` regardless of mode.
 - `envKeyedProviders` (parallel set) tracks which providers have a deployment-level key configured so the hard-pin resolver knows what's safe to pin to.
-- Managed-mode deploys register every provider with empty key + rely exclusively on BYOK / client-supplied auth.
+- Provider credential mode follows `byokOnly` in `cmd/router/main.go`, not `managed` alone. Preserve installation BYOK opt-in and client subscription routing when changing registration.
 
 Single source of truth for provider→env-var mapping = `providers.APIKeyEnvVars` in [`../internal/providers/provider.go`](../internal/providers/provider.go). Admin `/config` view reads it so it can't drift from actual wiring.

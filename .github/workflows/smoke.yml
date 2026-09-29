@@ -9,8 +9,8 @@ name: Smoke
 #
 # The PR job runs in replay-only mode against the cassettes committed under
 # smoke/mitmproxy/cassettes/ — no upstream API keys, safe on fork PRs, fully
-# deterministic. It's still path-gated to the regression-prone surfaces only;
-# docs, artifacts, the HMM sidecar, and the frontend never trigger it.
+# deterministic. The shared agent_checks selector chooses request-path changes;
+# the workflow itself is unfiltered so new components cannot bypass selection.
 #
 # A separate nightly job (needs ANTHROPIC_API_KEY; OPENAI_API_KEY optional) re-
 # records the cassettes against the real APIs to catch upstream drift (a
@@ -18,18 +18,6 @@ name: Smoke
 # never runs on a fork.
 on:
   pull_request:
-    paths:
-      - 'internal/proxy/**'
-      - 'internal/translate/**'
-      - 'internal/providers/**'
-      - 'internal/router/catalog/**'
-      - 'cmd/router/**'
-      - 'smoke/**'
-      - 'scripts/smoke/**'
-      - 'docker-compose.yml'
-      - 'Dockerfile'
-      - 'docker-bake.smoke.hcl'
-      - '.github/workflows/smoke.yml'
   schedule:
     # Nightly cassette-refresh: catches Anthropic-side drift the path-gated PR
     # job (replay-only, no key) can't see. Time chosen off any round hour.
@@ -52,9 +40,39 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Select smoke validation
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    outputs:
+      smoke: ${{ steps.select.outputs.smoke }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Test isolated smoke orchestration without starting Docker
+        run: python3 -m unittest discover -s scripts/smoke -p 'test_*.py' -v
+
+      - name: Select suites using the local agent validation contract
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "smoke=true" >> "$GITHUB_OUTPUT"
+          else
+            SELECTED=$(python3 scripts/agent_checks.py selected smoke --base "$BASE_SHA" --head "$HEAD_SHA")
+            echo "smoke=$SELECTED" >> "$GITHUB_OUTPUT"
+          fi
+
   smoke:
     name: Smoke (replay-only)
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: github.event_name != 'schedule' && needs.changes.outputs.smoke == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -68,6 +86,11 @@ jobs:
         uses: docker/setup-compose-action@v2
         with:
           version: latest
+
+      - name: Verify loopback ingress without opening runtime egress
+        env:
+          SMOKE_TEST_DOCKER: "1"
+        run: python3 scripts/smoke/test_runner.py ComposeMergeTest.test_replay_ingress_reaches_internal_server_without_default_route
 
       - name: Start Smoke image build timer
         run: echo "SMOKE_BUILD_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
@@ -101,8 +124,8 @@ jobs:
           SMOKE_PROXY_MODE: ${{ github.event.inputs.proxy_mode || 'replay-only' }}
           # Only present for a manual record/replay-or-record dispatch; unused
           # (and unnecessary) for the default replay-only path.
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_mode != 'replay-only' && secrets.ANTHROPIC_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.proxy_mode != 'replay-only' && secrets.OPENAI_API_KEY || '' }}
           # Layers the server/mitmproxy Docker builds against the GitHub
           # Actions cache (type=gha) via smoke/mitmproxy/docker-compose.ci-cache.yml
           # — the ONNX/tokenizer downloads, npm build, and Go compile are what

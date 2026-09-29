@@ -669,6 +669,9 @@ func main() {
 		logger.Info("Session pin store enabled (sliding 1h TTL, hourly sweep)")
 	}
 
+	sessionTurnClock := postgres.NewSessionTurnClockRepo(pool)
+	safeGo(logger, "session-turn-clock-sweep", func() { runSessionTurnClockSweep(context.Background(), sessionTurnClock) })
+
 	hardPinExplore := config.GetOr("ROUTER_HARD_PIN_EXPLORE", "true") == "true"
 	// Hard-pin compaction runs on every installation, so it must land on a
 	// provider with real deployment auth (env-keyed, excluding BYOK/passthrough)
@@ -1254,6 +1257,7 @@ func main() {
 
 	proxySvc := proxy.NewService(routeEntry, providerMap, telemetryEmitter, embedOnlyUser, semanticCache, pinStore, hardPinExplore, hardPinProvider, hardPinModel, repo.Telemetry).
 		WithSessionStrategyStore(sessionStrategyStore).
+		WithSessionTurnClock(sessionTurnClock).
 		WithEscalation(escalationStore, escalationObserver).
 		WithEscalationDashboard(escalationDashboardStore).
 		WithLLMEscalation(llmEscalationStore, escalationJudge).
@@ -2110,6 +2114,25 @@ func runSessionPinSweep(ctx context.Context, store sessionpin.Store) {
 			sweepCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			if err := store.SweepExpired(sweepCtx); err != nil {
 				logger.Error("Session pin sweep failed", "err", err)
+			}
+			cancel()
+		}
+	}
+}
+
+// runSessionTurnClockSweep deletes session turn clocks idle more than seven
+// days on an hourly cadence.
+func runSessionTurnClockSweep(ctx context.Context, store *postgres.SessionTurnClockRepo) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			if err := store.SweepExpired(sweepCtx); err != nil {
+				observability.FromContext(ctx).Error("Session turn clock sweep failed", "err", err)
 			}
 			cancel()
 		}

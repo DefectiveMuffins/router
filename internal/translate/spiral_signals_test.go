@@ -339,3 +339,105 @@ func TestAssistantToolCallOutcomes_PairsResultsByToolUseID(t *testing.T) {
 	assert.Equal(t, translate.ToolCallOutcome{Name: "Bash", Resolved: true, Errored: true}, outcomes[1])
 	assert.Equal(t, translate.ToolCallOutcome{Name: "Read"}, outcomes[2], "an unanswered call stays unresolved")
 }
+
+func TestLatestToolCallOutcomes_CountsOnlyCallsAnsweredThisRequest(t *testing.T) {
+	body := mustMarshalJSON(t, map[string]any{
+		"model": "claude-sonnet-4-6",
+		"messages": []any{
+			map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "tool_use", "id": "a", "name": "Bash", "input": map[string]any{"command": "make"}},
+			}},
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "a", "content": "boom", "is_error": true},
+			}},
+			map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "tool_use", "id": "b", "name": "Read", "input": map[string]any{"file_path": "/y.go"}},
+				map[string]any{"type": "tool_use", "id": "c", "name": "Bash", "input": map[string]any{"command": "ls"}},
+			}},
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "b", "content": "ok"},
+				map[string]any{"type": "tool_result", "tool_use_id": "c", "content": "no such dir", "is_error": true},
+			}},
+		},
+		"max_tokens": 256,
+	})
+	env, err := translate.ParseAnthropic(body)
+	require.NoError(t, err)
+
+	assert.Equal(t, []translate.ToolCallOutcome{
+		{Name: "Read", Resolved: true},
+		{Name: "Bash", Resolved: true, Errored: true},
+	}, env.LatestToolCallOutcomes(), "the earlier errored Bash call was counted by the previous request")
+}
+
+func TestEndsWithUserPrompt(t *testing.T) {
+	toolUse := map[string]any{"role": "assistant", "content": []any{
+		map[string]any{"type": "tool_use", "id": "a", "name": "Bash", "input": map[string]any{"command": "make"}},
+	}}
+	toolResult := map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "tool_result", "tool_use_id": "a", "content": "ok"},
+	}}
+	reply := map[string]any{"role": "assistant", "content": "Done."}
+	typed := map[string]any{"role": "user", "content": "now run the tests"}
+	reminderOnly := map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "text", "text": "<system-reminder>The task list changed.</system-reminder>"},
+	}}
+	systemNotice := map[string]any{"role": "system", "content": "Deferred tools are now available."}
+	typedTagged := map[string]any{"role": "user", "content": "<b>check this</b>"}
+	reminderThenTypedTagged := map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "text", "text": "<system-reminder>The task list changed.</system-reminder>\n<note>fix the flaky test</note>"},
+	}}
+
+	cases := []struct {
+		name     string
+		messages []any
+		want     bool
+	}{
+		{"first typed prompt", []any{typed}, true},
+		{"typed prompt after a reply", []any{typed, reply, typed}, true},
+		{"typed prompt behind a trailing system notice", []any{typed, reply, typed, systemNotice}, true},
+		{"tool result", []any{typed, toolUse, toolResult}, false},
+		{"tool result behind a trailing system notice", []any{typed, toolUse, toolResult, systemNotice}, false},
+		{"text split from the tool result into its own message", []any{typed, toolUse, toolResult, typed}, false},
+		{"injected reminder with no typed text", []any{typed, reply, reminderOnly}, false},
+		{"tagged text the person typed", []any{typed, reply, typedTagged}, true},
+		{"tagged text typed behind an injected reminder", []any{typed, reply, reminderThenTypedTagged}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, err := translate.ParseAnthropic(mustMarshalJSON(t, map[string]any{
+				"model": "claude-sonnet-4-6", "messages": tc.messages, "max_tokens": 256,
+			}))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, env.EndsWithUserPrompt())
+		})
+	}
+}
+
+func TestEndsWithUserPrompt_OpenAIToolMessageIsNotAPrompt(t *testing.T) {
+	body := mustMarshalJSON(t, map[string]any{
+		"model": "gpt-5.5",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "list files"},
+			map[string]any{"role": "assistant", "tool_calls": []any{
+				map[string]any{"id": "call_1", "type": "function", "function": map[string]any{"name": "shell", "arguments": "{}"}},
+			}},
+			map[string]any{"role": "tool", "tool_call_id": "call_1", "content": "a.go"},
+		},
+	})
+	env, err := translate.ParseOpenAI(body)
+	require.NoError(t, err)
+	assert.False(t, env.EndsWithUserPrompt())
+
+	typedBody := mustMarshalJSON(t, map[string]any{
+		"model": "gpt-5.5",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "list files"},
+			map[string]any{"role": "assistant", "content": "a.go"},
+			map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "thanks, now delete it"}}},
+		},
+	})
+	typedEnv, err := translate.ParseOpenAI(typedBody)
+	require.NoError(t, err)
+	assert.True(t, typedEnv.EndsWithUserPrompt())
+}

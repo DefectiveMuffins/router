@@ -12,9 +12,17 @@
 .PHONY: generate generate-statusline generate-inference-policy check-inference-policy inference-boundary generate-agent-guides check-agent-guides check-docs build test test-verbose test-statusline test-install smoke initdb migrate-up migrate-down migrate-create seed setup full-setup db dev check fmt vet precommit install-hooks help install-cc uninstall-cc up up-hmm down down-hmm logs
 
 # Load DATABASE_URL from .env files (matches docker-compose defaults).
+SAFE_AGENT_GOALS := doctor check-plan check-changed smoke
+ifneq ($(filter $(SAFE_AGENT_GOALS),$(MAKECMDGOALS)),)
+ifneq ($(filter-out $(SAFE_AGENT_GOALS),$(MAKECMDGOALS)),)
+$(error Run agent/smoke targets separately from targets that load developer env files)
+endif
+endif
+ifneq ($(filter-out $(SAFE_AGENT_GOALS),$(or $(MAKECMDGOALS),help)),)
 -include .env.development
 -include .env.local
 export
+endif
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -76,7 +84,7 @@ test-install: ## Run offline installer regression tests
 embed-registry: ## Re-embed install/directives.tsv + registry.sh into install.sh
 	@bash install/scripts/embed-registry.sh
 
-smoke: ## Pre-merge smoke suite: real router stack + real Anthropic (needs ANTHROPIC_API_KEY)
+smoke: ## Isolated, key-free record/replay smoke suite (replay-only by default)
 	./scripts/smoke/run.sh
 
 initdb: ## Create the database and router schema (idempotent)
@@ -226,10 +234,20 @@ install-hooks: ## Install git pre-commit hook
 	chmod +x "$$HOOK_DIR/pre-commit"; \
 	echo "Pre-commit hook installed at $$HOOK_DIR/pre-commit"
 
-check: inference-boundary generate fmt vet build test test-statusline test-install ## Full CI-equivalent check
+check: check-agent-guides check-docs inference-boundary generate fmt vet build test test-statusline test-install ## Local Go/codegen/installer checks; CI also validates integrations and component contracts
 	@if ! git diff --quiet internal/sqlc/; then \
 		echo "error: sqlc generation produced uncommitted changes"; \
 		git diff internal/sqlc/; \
 		exit 1; \
 	fi
 	@echo "All checks passed."
+
+.PHONY: doctor check-plan check-changed
+doctor: ## Read-only agent prerequisite discovery (no services or cloud calls)
+	python3 scripts/agent_checks.py doctor
+
+check-plan: ## Print applicable suites including uncommitted changes (BASE=origin/main)
+	python3 scripts/agent_checks.py plan --base $(or $(BASE),origin/main)
+
+check-changed: ## Run local suites; report required integrations as blocked
+	python3 scripts/agent_checks.py run --base $(or $(BASE),origin/main)
