@@ -404,6 +404,7 @@ func TestContextWindowFor_KnownModels(t *testing.T) {
 	assert.Equal(t, 1_050_000, ContextWindowFor("gpt-5.6-luna-pro"))
 	assert.Equal(t, 1_050_000, ContextWindowFor("gpt-6-astra"))
 	assert.Equal(t, 1_050_000, ContextWindowFor("gpt-6-sol"))
+	assert.Equal(t, 1_050_000, ContextWindowFor("gpt-6.1-sol"))
 	assert.Equal(t, 1_050_000, ContextWindowFor("gpt-6-luna"))
 	// GPT-4.1 family has 1M context.
 	assert.Equal(t, 1_047_576, ContextWindowFor("gpt-4.1"))
@@ -425,6 +426,18 @@ func TestContextWindowFor_KnownModels(t *testing.T) {
 	assert.Equal(t, 204_800, ContextWindowFor("minimax/minimax-m2.7"))
 	// Unknown model falls back to DefaultContextWindow.
 	assert.Equal(t, DefaultContextWindow, ContextWindowFor("not-a-real-model"))
+}
+
+func TestGPT61SolCachedAndLongContextPricing(t *testing.T) {
+	price, ok := PriceFor(providers.ProviderOpenAI, "gpt-6.1-sol")
+	require.True(t, ok)
+	assert.Equal(t, 0.05, price.CacheReadMultiplier)
+	require.NotNil(t, price.LongContext)
+	assert.Equal(t, 272_000, price.LongContext.ThresholdTokens)
+	assert.Equal(t, 4.0, price.LongContext.InputUSDPer1M)
+	assert.Equal(t, 15.0, price.LongContext.OutputUSDPer1M)
+
+	assert.True(t, SupportsFastMode("gpt-6.1-sol"))
 }
 
 func TestValidateDeployed_FlagsMissingAndUntiered(t *testing.T) {

@@ -98,19 +98,20 @@ var forceModelAliases = map[string]string{
 	// they pointed at gpt-5.5 until it was retired. Version-specific aliases
 	// (gpt-5-5*) deliberately still resolve to their exact model, which stays
 	// available as priced passthrough.
-	"gpt":        "gpt-6-sol",
-	"openai":     "gpt-6-sol",
+	"gpt":        "gpt-6.1-sol",
+	"openai":     "gpt-6.1-sol",
 	"gpt-6":      "gpt-6-astra",
 	"gpt6":       "gpt-6-astra",
 	"gpt-6astra": "gpt-6-astra",
 	"astra":      "gpt-6-astra",
 	// Bare sol/luna follow the GPT-6 generation; gpt-5-6-* keeps the 5.6 rows.
-	"sol":       "gpt-6-sol",
-	"gpt6sol":   "gpt-6-sol",
-	"gpt-6sol":  "gpt-6-sol",
-	"luna":      "gpt-6-luna",
-	"gpt6luna":  "gpt-6-luna",
-	"gpt-6luna": "gpt-6-luna",
+	"sol":         "gpt-6.1-sol",
+	"gpt-6-1-sol": "gpt-6.1-sol",
+	"gpt6sol":     "gpt-6-sol",
+	"gpt-6sol":    "gpt-6-sol",
+	"luna":        "gpt-6-luna",
+	"gpt6luna":    "gpt-6-luna",
+	"gpt-6luna":   "gpt-6-luna",
 	// The bare gpt-5.6 alias routes to Sol, matching OpenAI's own alias.
 	"gpt-5.6":       "gpt-5.6-sol",
 	"gpt-5-6":       "gpt-5.6-sol",
