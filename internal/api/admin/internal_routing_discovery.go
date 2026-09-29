@@ -118,7 +118,7 @@ func InternalRoutingDiscoveryHandler(source CurrentPolicyReader) gin.HandlerFunc
 			Target: current.Target, ProfileKey: current.ProfileKey, ActivationID: current.ActivationID,
 			SelectionSetSHA256: current.SelectionSetSHA256, CandidateSHA256: current.CandidateSHA256,
 			PolicySHA256: current.PolicySHA256, Clusters: clusters, Models: models,
-			Catalog: catalog.Listing(), Distribution: points,
+			Catalog: catalog.BindingListing(), Distribution: points,
 		})
 	}
 }
@@ -183,14 +183,14 @@ func discoveryRoster(current policyregistry.CurrentPolicy) ([]hmmClusterDTO, []c
 	}
 	sort.Strings(clusterNames)
 	clusters := make([]hmmClusterDTO, 0, len(clusterNames))
-	modelByID := make(map[string]catalog.ModelListing)
+	modelByID := make(map[string]catalog.Model)
 	for _, name := range clusterNames {
 		clusterRoster := current.Roster.Clusters[name]
 		for _, arm := range clusterRoster.Arms {
 			baseRosterID, _ := hmm.SplitEffort(arm)
 			catalogID := hmm.CatalogIDForRoster(baseRosterID)
 			if model, ok := catalog.ByID(catalogID); ok {
-				modelByID[catalogID] = catalog.ModelListing{Model: catalogID, Provider: model.PrimaryProvider(), FastMode: catalog.SupportsFastMode(catalogID)}
+				modelByID[catalogID] = model
 			}
 		}
 		arms, _ := hmmselection.ArmOrder(clusterRoster, "")
@@ -201,8 +201,12 @@ func discoveryRoster(current policyregistry.CurrentPolicy) ([]hmmClusterDTO, []c
 		clusters = append(clusters, hmmClusterDTO{Cluster: name, Arms: arms, Models: models})
 	}
 	models := make([]catalog.ModelListing, 0, len(modelByID))
-	for _, model := range modelByID {
-		models = append(models, model)
+	for catalogID, model := range modelByID {
+		for _, binding := range model.Providers {
+			models = append(models, catalog.ModelListing{
+				Model: catalogID, Provider: binding.Provider, FastMode: catalog.SupportsFastMode(catalogID),
+			})
+		}
 	}
 	catalog.SortListing(models)
 	return clusters, models

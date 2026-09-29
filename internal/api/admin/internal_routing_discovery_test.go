@@ -165,3 +165,35 @@ func TestInternalRoutingDiscoveryRejectsInvalidAndUnavailableRequests(t *testing
 	engine.ServeHTTP(recorder, discoveryRequest(`{"target":"prod/stable","excluded_models":["gpt-5.6-luna","grok-4.6"]}`, "test-token"))
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
+
+func TestInternalRoutingDiscoveryReportsEveryProviderBinding(t *testing.T) {
+	reader := discoveryFixture()
+	cluster := reader.current.Roster.Clusters["low"]
+	cluster.Arms = append(cluster.Arms, "anthropic/claude-sonnet-4.6")
+	cluster.ArmScores["anthropic/claude-sonnet-4.6"] = 8
+	cluster.ArmIndices["anthropic/claude-sonnet-4.6"] = rosterdata.ArmIndices{WII: 70, WPI: 20}
+	reader.current.Roster.Clusters["low"] = cluster
+
+	recorder := httptest.NewRecorder()
+	discoveryEngine(reader).ServeHTTP(recorder, discoveryRequest(`{"target":"prod/stable"}`, "test-token"))
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var response struct {
+		Models  []struct{ Model, Provider string } `json:"models"`
+		Catalog []struct{ Model, Provider string } `json:"catalog"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	providers := make(map[string]bool)
+	for _, model := range response.Models {
+		if model.Model == "claude-sonnet-4-6" {
+			providers[model.Provider] = true
+		}
+	}
+	assert.Equal(t, map[string]bool{"anthropic": true, "anthropic_gateway": true, "openai_gateway": true}, providers)
+	catalogProviders := make(map[string]bool)
+	for _, model := range response.Catalog {
+		if model.Model == "claude-sonnet-4-6" {
+			catalogProviders[model.Provider] = true
+		}
+	}
+	assert.Equal(t, providers, catalogProviders)
+}
