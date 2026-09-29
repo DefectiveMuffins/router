@@ -16,7 +16,7 @@ const defaultDistributionGrid = 21
 // RoutingDistribution projects the HMM roster's within-band model mix across
 // the quality/price dial. Each classifier band contributes equal weight; live
 // traffic weights remain request-dependent and are intentionally not guessed.
-func RoutingDistribution(roster *rosterdata.Roster, gridN int, excludedModels, excludedProviders map[string]struct{}) ([]cluster.DistributionPoint, error) {
+func RoutingDistribution(roster *rosterdata.Roster, gridN int, availableProviders, excludedModels, excludedProviders map[string]struct{}) ([]cluster.DistributionPoint, error) {
 	if roster == nil || !isDynamicRoster(roster) {
 		return nil, fmt.Errorf("HMM routing distribution requires a dynamic roster or compiled serving policy")
 	}
@@ -40,7 +40,7 @@ func RoutingDistribution(roster *rosterdata.Roster, gridN int, excludedModels, e
 			for _, arm := range clusterRoster.Arms {
 				baseRosterID, _ := hmm.SplitEffort(arm)
 				catalogID := hmm.CatalogIDForRoster(baseRosterID)
-				binding, ok := EligibleBinding(catalogID, excludedModels, excludedProviders)
+				binding, ok := EligibleBinding(catalogID, availableProviders, excludedModels, excludedProviders)
 				if !ok {
 					continue
 				}
@@ -87,7 +87,7 @@ func RoutingDistribution(roster *rosterdata.Roster, gridN int, excludedModels, e
 
 // EligibleBinding returns the first policy-allowed catalog binding that survives
 // the same model and provider exclusions used by managed request selection.
-func EligibleBinding(catalogID string, excludedModels, excludedProviders map[string]struct{}) (catalog.ProviderBinding, bool) {
+func EligibleBinding(catalogID string, availableProviders, excludedModels, excludedProviders map[string]struct{}) (catalog.ProviderBinding, bool) {
 	if _, excluded := excludedModels[catalogID]; excluded {
 		return catalog.ProviderBinding{}, false
 	}
@@ -97,6 +97,9 @@ func EligibleBinding(catalogID string, excludedModels, excludedProviders map[str
 	}
 	providerPolicy := policy.ManagedProviderPolicy()
 	for _, binding := range model.Providers {
+		if _, wired := availableProviders[binding.Provider]; !wired {
+			continue
+		}
 		if _, excluded := excludedProviders[binding.Provider]; !excluded && providerPolicy.Allows(binding.Provider) {
 			return binding, true
 		}
