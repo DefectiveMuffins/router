@@ -70,6 +70,7 @@ func (NoOpInstallationChangeNotifier) NotifyInstallationChanged(string) {}
 type Service struct {
 	installations          InstallationRepository
 	apiKeys                APIKeyRepository
+	credentialSubjects     CredentialSubjectLookup
 	externalKeys           ExternalAPIKeyRepository
 	users                  UserRepository
 	clusterModelLists      ClusterModelListRepository
@@ -117,6 +118,12 @@ type Service struct {
 // WithSubscriptionAccounts wires encrypted server-side subscription storage.
 func (s *Service) WithSubscriptionAccounts(repo SubscriptionAccountRepository) *Service {
 	s.subscriptionAccounts = repo
+	return s
+}
+
+// WithCredentialSubjectLookup wires the current eligibility projection used by read-only key checks.
+func (s *Service) WithCredentialSubjectLookup(lookup CredentialSubjectLookup) *Service {
+	s.credentialSubjects = lookup
 	return s
 }
 

@@ -24,6 +24,33 @@ func (r CredentialLookup) GetActiveByHashWithInstallation(ctx context.Context, h
 	return &auth.APIKey{ID: key.ID.String(), InstallationID: key.InstallationID.String(), Scope: auth.APIKeyScope(key.Scope), CredentialSubjectID: uuidString(key.CredentialSubjectID)}, &auth.Installation{ID: row.RouterModelRouterInstallation.ID.String()}, nil
 }
 
+// GetCredentialSubject reads the current subject projection for gateway read-key authentication.
+func (r CredentialLookup) GetCredentialSubject(ctx context.Context, subjectID, installationID string) (*auth.CredentialSubject, error) {
+	subjectUUID, err := uuid.Parse(subjectID)
+	if err != nil {
+		return nil, err
+	}
+	installationUUID, err := uuid.Parse(installationID)
+	if err != nil {
+		return nil, err
+	}
+	projection, err := r.Queries.GetServingSubjectForAdmission(ctx, sqlc.GetServingSubjectForAdmissionParams{
+		SubjectID:      subjectUUID,
+		InstallationID: installationUUID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &auth.CredentialSubject{
+		ID:                   projection.RouterCredentialSubject.ID.String(),
+		ProjectionComplete:   projection.RouterCredentialSubject.ProjectionComplete,
+		InternalEnrolled:     projection.RouterCredentialSubject.InternalEnrolled,
+		EnrollmentGeneration: projection.RouterCredentialSubject.EnrollmentGeneration,
+		AccessEnabled:        projection.AccessEnabled,
+		RevokedAt:            timestamptzPtr(projection.RouterCredentialSubject.RevokedAt),
+	}, nil
+}
+
 func uuidString(value pgtype.UUID) string {
 	if !value.Valid {
 		return ""

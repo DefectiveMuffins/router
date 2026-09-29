@@ -35,6 +35,22 @@ func (v RoutingCredentialVerifier) VerifyReadCredential(ctx context.Context, raw
 	if !strings.HasPrefix(rawToken, APIKeyPrefix+"_") {
 		return ErrInvalidPrefix
 	}
-	_, _, err := v.VerifyRoutingCredential(ctx, rawToken)
-	return err
+	installation, key, err := v.VerifyRoutingCredential(ctx, rawToken)
+	if err != nil {
+		return err
+	}
+	if key.CredentialSubjectID == "" {
+		return nil
+	}
+	if v.Subjects == nil {
+		return ErrPersonalCredentialRequired
+	}
+	subject, err := v.Subjects.GetCredentialSubject(ctx, key.CredentialSubjectID, installation.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrPersonalCredentialRequired
+	}
+	if err != nil {
+		return err
+	}
+	return ValidateCredentialSubject(*key, subject)
 }

@@ -75,7 +75,8 @@ func run() error {
 		return fmt.Errorf("initialize gateway policy registry: %w", err)
 	}
 	defer registry.Close()
-	credentials := auth.RoutingCredentialVerifier{Keys: serving.CredentialLookup{Queries: dbbudget.Queries(pool)}}
+	credentialLookup := serving.CredentialLookup{Queries: dbbudget.Queries(pool)}
+	credentials := auth.RoutingCredentialVerifier{Keys: credentialLookup, Subjects: credentialLookup}
 	admissions, err := serving.NewServingAdmissionRepo(pool, environment)
 	if err != nil {
 		return err

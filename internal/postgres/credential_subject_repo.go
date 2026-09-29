@@ -23,6 +23,33 @@ func NewCredentialSubjectRepo(pool *pgxpool.Pool) *CredentialSubjectRepo {
 	return &CredentialSubjectRepo{pool: pool}
 }
 
+// GetCredentialSubject reads the current installation-scoped eligibility projection for a read-key check.
+func (r *CredentialSubjectRepo) GetCredentialSubject(ctx context.Context, subjectID, installationID string) (*auth.CredentialSubject, error) {
+	subjectUUID, err := uuid.Parse(subjectID)
+	if err != nil {
+		return nil, err
+	}
+	installationUUID, err := uuid.Parse(installationID)
+	if err != nil {
+		return nil, err
+	}
+	projection, err := dbbudget.Queries(r.pool).GetServingSubjectForAdmission(ctx, sqlc.GetServingSubjectForAdmissionParams{
+		SubjectID:      subjectUUID,
+		InstallationID: installationUUID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &auth.CredentialSubject{
+		ID:                   projection.RouterCredentialSubject.ID.String(),
+		ProjectionComplete:   projection.RouterCredentialSubject.ProjectionComplete,
+		InternalEnrolled:     projection.RouterCredentialSubject.InternalEnrolled,
+		EnrollmentGeneration: projection.RouterCredentialSubject.EnrollmentGeneration,
+		AccessEnabled:        projection.AccessEnabled,
+		RevokedAt:            timestamptzPtr(projection.RouterCredentialSubject.RevokedAt),
+	}, nil
+}
+
 // CreatePending issues a new subject and key together without touching an installation-shared key.
 func (r *CredentialSubjectRepo) CreatePending(ctx context.Context, externalID string, key auth.CreateAPIKeyParams) (*auth.APIKey, error) {
 	installationID, err := uuid.Parse(key.InstallationID)

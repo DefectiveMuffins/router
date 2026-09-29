@@ -569,6 +569,7 @@ func main() {
 	}
 
 	authSvc := auth.NewService(repo.Installations, repo.APIKeys, repo.ExternalAPIKeys, repo.Users, cache, userCache, time.Now).
+		WithCredentialSubjectLookup(postgres.NewCredentialSubjectRepo(pool)).
 		WithEncryptor(encryptor).
 		WithInstallationChangeNotifier(notifier).
 		WithClusterModelLists(repo.ClusterModelLists).

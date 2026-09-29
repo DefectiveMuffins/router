@@ -50,16 +50,20 @@ router session cost.
 
 ## Errors
 
-Error bodies from the endpoint are `{"message": "…", "description": "…"}`,
-with `description` included only when it adds detail. Authentication failures
-(`401`, and a `503` when key verification itself is unavailable) are rejected
-before the endpoint runs, so they use the router's shared authentication error
-body instead and carry no rate-limit headers.
+Error bodies produced by the endpoint are `{"message": "…", "description": "…"}`,
+with `description` included only when it adds detail. Authentication failures are
+rejected before the endpoint runs and use the auth boundary's envelope instead:
+the worker returns `{"error": "invalid_key"}` (or `{"error": "auth_unavailable"}`
+if key verification is unavailable). A managed gateway rejects credentials with a
+nested `error` object (`invalid_request_error`; `api_error` if verification is
+unavailable). If the gateway forwards a request that the worker then rejects,
+the worker's envelope is passed through. Authentication failures carry no
+rate-limit headers.
 
 | Status | When |
 | --- | --- |
 | `400` | The session id is empty or longer than 128 bytes. |
-| `401` | The key is missing, unknown, revoked, or neither a routing nor an analytics key. |
+| `401` | The key is missing, unknown, revoked, has a disabled or incomplete personal-key subject, or is neither a routing nor an analytics key. |
 | `404` | No committed telemetry for this session in the key's installation, whether it does not exist, belongs elsewhere or has not been recorded yet. |
 | `429` | The installation's rate limit is exhausted. |
 | `503` | This deployment has no telemetry storage, or key verification is temporarily unavailable. |
@@ -70,9 +74,13 @@ a moment to appear.
 
 ## Rate limit
 
-Each installation gets 500 requests per minute, with a burst of 500, shared by
-all of its keys. Buckets are held per router replica, so the total allowance
-grows with the replica count. Every authenticated response carries
-`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Used` and
-`X-RateLimit-Reset` (Unix seconds when the bucket is full again). A `429` also
-carries `Retry-After` in whole seconds.
+Each installation nominally gets 500 requests per minute, with a burst of 500,
+shared by all of its keys on each router replica. The replicas have independent
+buckets, so the aggregate allowance grows with replica count. Buckets are held
+in a 1,024-entry LRU per replica; evicting an installation drops its refill
+state, so a later request starts with a full burst. Under enough installation
+churn, the nominal per-installation allowance can therefore be exceeded
+temporarily. Every authenticated response carries `X-RateLimit-Limit`,
+`X-RateLimit-Remaining`, `X-RateLimit-Used` and `X-RateLimit-Reset` (Unix seconds
+when the bucket is full again). A `429` also carries `Retry-After` in whole
+seconds.

@@ -25,13 +25,37 @@ func (s *Service) VerifyAnalyticsAPIKey(ctx context.Context, rawToken string) (*
 // installation-scoped read surfaces. Both resolve to the owning installation;
 // neither loads BYOK secrets, cluster allowlists or subscription state.
 func (s *Service) VerifyReadAPIKey(ctx context.Context, rawToken string) (*Installation, *APIKey, error) {
+	var installation *Installation
+	var apiKey *APIKey
+	var err error
 	if strings.HasPrefix(rawToken, AnalyticsAPIKeyPrefix+"_") {
-		return s.verifySlimAPIKey(ctx, rawToken, ScopeAnalyticsRead)
+		installation, apiKey, err = s.verifySlimAPIKey(ctx, rawToken, ScopeAnalyticsRead)
+	} else {
+		if !strings.HasPrefix(rawToken, APIKeyPrefix+"_") {
+			return nil, nil, ErrInvalidPrefix
+		}
+		installation, apiKey, err = s.verifySlimAPIKey(ctx, rawToken, ScopeRouting)
 	}
-	if !strings.HasPrefix(rawToken, APIKeyPrefix+"_") {
-		return nil, nil, ErrInvalidPrefix
+	if err != nil {
+		return nil, nil, err
 	}
-	return s.verifySlimAPIKey(ctx, rawToken, ScopeRouting)
+	if apiKey.CredentialSubjectID == "" {
+		return installation, apiKey, nil
+	}
+	if s.credentialSubjects == nil {
+		return nil, nil, ErrPersonalCredentialRequired
+	}
+	subject, err := s.credentialSubjects.GetCredentialSubject(ctx, apiKey.CredentialSubjectID, installation.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, ErrPersonalCredentialRequired
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := ValidateCredentialSubject(*apiKey, subject); err != nil {
+		return nil, nil, err
+	}
+	return installation, apiKey, nil
 }
 
 func (s *Service) verifySlimAPIKey(ctx context.Context, rawToken string, scope APIKeyScope) (*Installation, *APIKey, error) {

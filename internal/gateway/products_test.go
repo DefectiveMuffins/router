@@ -177,10 +177,10 @@ func TestAnalyticsNeverUsesRoutingAdmissionOrAssertion(t *testing.T) {
 
 func TestSessionCostVerifiesEitherKeyWithoutAdmissionOrAssertion(t *testing.T) {
 	var calls atomic.Int32
-	seenPaths := make(chan string, 4)
+	seenPaths := make(chan string, 5)
 	worker := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		seenPaths <- r.URL.Path
+		seenPaths <- r.URL.RequestURI()
 		assert.Empty(t, r.Header.Get(policyregistry.ServingAssertionHeader))
 		assert.Equal(t, "Bearer gateway-iam", r.Header.Get(policyregistry.ServerlessAuthorizationHeader))
 		w.WriteHeader(http.StatusOK)
@@ -194,6 +194,7 @@ func TestSessionCostVerifiesEitherKeyWithoutAdmissionOrAssertion(t *testing.T) {
 		{"X-API-Key", "ra_analytics", "ra_analytics", "/v1/sessions/session-1/cost"},
 		{auth.RouterKeyHeader, "rk_routing", "rk_routing", "/v1/sessions/session-1/cost"},
 		{"Authorization", "Bearer ra_analytics", "ra_analytics", "/v1/sessions//cost"},
+		{"Authorization", "Bearer rk_routing", "rk_routing", "/v1/sessions/abc%2Fdef/cost"},
 	} {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, request.path, nil)
@@ -211,7 +212,7 @@ func TestSessionCostVerifiesEitherKeyWithoutAdmissionOrAssertion(t *testing.T) {
 	w := httptest.NewRecorder()
 	forwarder.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/sessions/session-1/cost", nil))
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	assert.Equal(t, int32(4), calls.Load())
+	assert.Equal(t, int32(5), calls.Load())
 }
 
 func TestPublicVersionAndFeedbackAssetsRemainKeyless(t *testing.T) {

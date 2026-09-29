@@ -12,7 +12,10 @@ type RoutingCredentialLookup interface {
 }
 
 // RoutingCredentialVerifier deliberately has no secret, user-attribution or authorization cache dependencies.
-type RoutingCredentialVerifier struct{ Keys RoutingCredentialLookup }
+type RoutingCredentialVerifier struct {
+	Keys     RoutingCredentialLookup
+	Subjects CredentialSubjectLookup
+}
 
 // VerifyRoutingCredential authenticates gateway admission without loading provider secrets or
 // caches. Admission rechecks eligibility under the identity/session transaction locks.

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -17,6 +18,11 @@ type CredentialSubject struct {
 	EnrollmentGeneration int64
 	AccessEnabled        bool
 	RevokedAt            *time.Time
+}
+
+// CredentialSubjectLookup reads the current installation-scoped eligibility projection.
+type CredentialSubjectLookup interface {
+	GetCredentialSubject(context.Context, string, string) (*CredentialSubject, error)
 }
 
 // ValidateCredentialSubject fails closed on pending/revoked ownership and rejects a shared-key subject.

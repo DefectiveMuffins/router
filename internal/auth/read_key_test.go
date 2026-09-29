@@ -79,6 +79,39 @@ func TestService_VerifyReadAPIKey_DoesNotCacheSlimRoutingRecord(t *testing.T) {
 	assert.True(t, analyticsCached)
 }
 
+func TestService_VerifyReadAPIKeyRequiresCurrentPersonalSubject(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		subject    *auth.CredentialSubject
+		lookupErr  error
+		withLookup bool
+		wantErr    error
+	}{
+		{"active", &auth.CredentialSubject{ID: "subject", ProjectionComplete: true, AccessEnabled: true, EnrollmentGeneration: 1}, nil, true, nil},
+		{"disabled", &auth.CredentialSubject{ID: "subject", ProjectionComplete: true, EnrollmentGeneration: 1}, nil, true, auth.ErrPersonalCredentialRequired},
+		{"revoked", &auth.CredentialSubject{ID: "subject", ProjectionComplete: true, AccessEnabled: true, RevokedAt: new(time.Time)}, nil, true, auth.ErrPersonalCredentialRequired},
+		{"incomplete projection", &auth.CredentialSubject{ID: "subject", AccessEnabled: true, EnrollmentGeneration: 1}, nil, true, auth.ErrPersonalCredentialRequired},
+		{"missing subject", nil, sql.ErrNoRows, true, auth.ErrPersonalCredentialRequired},
+		{"lookup unavailable", nil, context.DeadlineExceeded, true, context.DeadlineExceeded},
+		{"lookup not configured", nil, nil, false, auth.ErrPersonalCredentialRequired},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			row := scopedKeyRow("rk_personal", auth.ScopeRouting, &auth.Installation{ID: "installation"})
+			row.apiKey.CredentialSubjectID = "subject"
+			svc, _ := makeService(t, row)
+			if test.withLookup {
+				svc.WithCredentialSubjectLookup(credentialSubjectLookupStub{subject: test.subject, err: test.lookupErr})
+			}
+			_, _, err := svc.VerifyReadAPIKey(context.Background(), "rk_personal")
+			if test.wantErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestGatewayReadCredentialAcceptsRoutingOrAnalyticsKeys(t *testing.T) {
 	for _, test := range []struct {
 		name, token     string
@@ -101,6 +134,39 @@ func TestGatewayReadCredentialAcceptsRoutingOrAnalyticsKeys(t *testing.T) {
 				require.NoError(t, err)
 			} else {
 				require.ErrorIs(t, err, test.want)
+			}
+		})
+	}
+}
+
+type credentialSubjectLookupStub struct {
+	subject *auth.CredentialSubject
+	err     error
+}
+
+func (s credentialSubjectLookupStub) GetCredentialSubject(context.Context, string, string) (*auth.CredentialSubject, error) {
+	return s.subject, s.err
+}
+
+func TestGatewayReadCredentialRequiresCurrentPersonalSubject(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		lookup  auth.CredentialSubjectLookup
+		wantErr error
+	}{
+		{"active", credentialSubjectLookupStub{subject: &auth.CredentialSubject{ID: "subject", ProjectionComplete: true, AccessEnabled: true, EnrollmentGeneration: 1}}, nil},
+		{"disabled", credentialSubjectLookupStub{subject: &auth.CredentialSubject{ID: "subject", ProjectionComplete: true, EnrollmentGeneration: 1}}, auth.ErrPersonalCredentialRequired},
+		{"revoked", credentialSubjectLookupStub{subject: &auth.CredentialSubject{ID: "subject", ProjectionComplete: true, AccessEnabled: true, RevokedAt: new(time.Time)}}, auth.ErrPersonalCredentialRequired},
+		{"missing lookup", nil, auth.ErrPersonalCredentialRequired},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			key := &auth.APIKey{ID: "key", InstallationID: "installation", Scope: auth.ScopeRouting, CredentialSubjectID: "subject"}
+			verifier := auth.RoutingCredentialVerifier{Keys: gatewayCredentialRepo{key: key}, Subjects: test.lookup}
+			err := verifier.VerifyReadCredential(context.Background(), "rk_test")
+			if test.wantErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, test.wantErr)
 			}
 		})
 	}

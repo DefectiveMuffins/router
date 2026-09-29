@@ -88,11 +88,12 @@ func analyticsSurface(r *http.Request) bool {
 }
 
 func sessionCostSurface(r *http.Request) bool {
-	if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/v1/sessions/") || !strings.HasSuffix(r.URL.Path, "/cost") {
+	if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.EscapedPath(), "/v1/sessions/") || !strings.HasSuffix(r.URL.EscapedPath(), "/cost") {
 		return false
 	}
-	sessionID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/sessions/"), "/cost")
-	return sessionID == "" || singlePathParameter(r.URL.Path, "/v1/sessions/", "/cost")
+	path := r.URL.EscapedPath()
+	sessionID := strings.TrimSuffix(strings.TrimPrefix(path, "/v1/sessions/"), "/cost")
+	return sessionID == "" || singlePathParameter(path, "/v1/sessions/", "/cost")
 }
 
 // serveVerifiedRead forwards a read-only request to the default lane once its
