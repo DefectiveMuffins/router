@@ -60,6 +60,20 @@ func TestCoalesceDuplicateToolResults_OpenAI(t *testing.T) {
 				`{"role":"tool","tool_call_id":"b","content":"b1\n\nb2"}]`,
 		},
 		{
+			name: "a reused id merges only within each call",
+			messages: `[` + coalesceAssistantCallA + `,` +
+				`{"role":"tool","tool_call_id":"a","content":"first call"},` +
+				`{"role":"tool","tool_call_id":"a","content":"first call progress"},` +
+				coalesceAssistantCallA + `,` +
+				`{"role":"tool","tool_call_id":"a","content":"second call"},` +
+				`{"role":"tool","tool_call_id":"a","content":"second call progress"}]`,
+			wantRemoved: 2,
+			wantMessages: `[` + coalesceAssistantCallA + `,` +
+				`{"role":"tool","tool_call_id":"a","content":"first call\n\nfirst call progress"},` +
+				coalesceAssistantCallA + `,` +
+				`{"role":"tool","tool_call_id":"a","content":"second call\n\nsecond call progress"}]`,
+		},
+		{
 			name: "empty-string duplicate adds no separator",
 			messages: `[` + coalesceAssistantCallA + `,` +
 				`{"role":"tool","tool_call_id":"a","content":"only"},` +
@@ -82,6 +96,16 @@ func TestCoalesceDuplicateToolResults_OpenAI(t *testing.T) {
 func TestCoalesceDuplicateToolResults_OpenAI_CleanHistoryIsByteIdentical(t *testing.T) {
 	body := `{"model":"m", "messages":[{"role":"user","content":"go"},` + coalesceAssistantCallA + `,` +
 		`{"role":"tool","tool_call_id":"a","content":"done"},{"role":"tool","content":"no id"},{"role":"tool","content":"no id"}]}`
+	e, err := ParseOpenAI([]byte(body))
+	require.NoError(t, err)
+
+	assert.Zero(t, e.CoalesceDuplicateToolResults())
+	assert.Equal(t, body, string(e.body))
+}
+
+func TestCoalesceDuplicateToolResults_OpenAI_SeparateCallsReusingAnIDAreUntouched(t *testing.T) {
+	body := `{"model":"m","messages":[` + coalesceAssistantCallA + `,{"role":"tool","tool_call_id":"a","content":"one"},` +
+		coalesceAssistantCallA + `,{"role":"tool","tool_call_id":"a","content":"two"}]}`
 	e, err := ParseOpenAI([]byte(body))
 	require.NoError(t, err)
 
@@ -164,6 +188,34 @@ func TestCoalesceDuplicateToolResults_Anthropic_CleanHistoryIsByteIdentical(t *t
 
 	assert.Zero(t, e.CoalesceDuplicateToolResults())
 	assert.Equal(t, body, string(e.body))
+}
+
+func TestCoalesceDuplicateToolResults_Anthropic_SeparateCallsReusingAnIDAreUntouched(t *testing.T) {
+	body := `{"model":"m","max_tokens":10,"messages":[` + coalesceAnthropicCallA + `,` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":"one"}]},` + coalesceAnthropicCallA + `,` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":"two"}]}]}`
+	e, err := ParseAnthropic([]byte(body))
+	require.NoError(t, err)
+
+	assert.Zero(t, e.CoalesceDuplicateToolResults())
+	assert.Equal(t, body, string(e.body))
+}
+
+func TestCoalesceDuplicateToolResults_Anthropic_CacheMarkerDoesNotJumpAnIntervening1hMarker(t *testing.T) {
+	body := `{"model":"claude-opus-5","max_tokens":10,"messages":[` + coalesceAnthropicCallA + `,{"role":"user","content":[` +
+		`{"type":"tool_result","tool_use_id":"a","content":"final"},` +
+		`{"type":"text","text":"note","cache_control":{"type":"ephemeral","ttl":"1h"}},` +
+		`{"type":"tool_result","tool_use_id":"a","content":"progress","cache_control":{"type":"ephemeral","ttl":"5m"}}]}]}`
+	e, err := ParseAnthropic([]byte(body))
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, e.CoalesceDuplicateToolResults())
+	assert.JSONEq(t, `[`+coalesceAnthropicCallA+`,{"role":"user","content":[`+
+		`{"type":"tool_result","tool_use_id":"a","content":"final\n\nprogress"},`+
+		`{"type":"text","text":"note","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]`,
+		gjson.GetBytes(e.body, "messages").Raw)
+	_, err = e.PrepareAnthropic(nil, EmitOptions{TargetModel: "claude-opus-5"})
+	require.NoError(t, err, "coalescing must not reverse breakpoint TTL order")
 }
 
 func TestCoalesceDuplicateToolResults_Gemini_NoOp(t *testing.T) {

@@ -7,14 +7,15 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// CoalesceDuplicateToolResults merges every tool result that shares a call id
-// into the first one, appending later contents in order and removing the
-// later results. Codex code-mode records each notify() from an exec script as
-// another output under the running call's id; OpenAI accepts that, but
-// Anthropic 400s on a tool_use with more than one tool_result, and Codex
-// resends the history every turn, so one such call bricks the session.
-// Returns the number of duplicate results removed; the body is untouched when
-// zero. Gemini-format envelopes are left alone.
+// CoalesceDuplicateToolResults merges every tool result answering the same
+// tool call into the first one, appending later contents in order and
+// removing the later results. Codex code-mode records each notify() from an
+// exec script as another output under the running call's id; OpenAI accepts
+// that, but Anthropic 400s on a tool_use with more than one tool_result, and
+// Codex resends the history every turn, so one such call bricks the session.
+// A later assistant call that reuses an id starts a new group. Returns the
+// number of duplicate results removed; the body is untouched when zero.
+// Gemini-format envelopes are left alone.
 func (e *RequestEnvelope) CoalesceDuplicateToolResults() int {
 	if e == nil {
 		return 0
@@ -29,18 +30,41 @@ func (e *RequestEnvelope) CoalesceDuplicateToolResults() int {
 	}
 }
 
+// toolResultKey identifies the call a result answers: its id plus how many
+// assistant calls with that id precede it, so a reused id is a distinct call.
+type toolResultKey struct {
+	id   string
+	call int
+}
+
 func (e *RequestEnvelope) coalesceOpenAIToolResults() int {
 	msgs := gjson.GetBytes(e.body, "messages")
 	if !msgs.IsArray() {
 		return 0
 	}
 	all := msgs.Array()
-	contents := make(map[string][]gjson.Result)
+	keys := make([]toolResultKey, len(all))
+	groups := make(map[toolResultKey][]gjson.Result)
+	calls := make(map[string]int)
 	duplicated := false
-	for _, m := range all {
-		if id := openAIToolResultID(m); id != "" {
-			contents[id] = append(contents[id], m.Get("content"))
-			duplicated = duplicated || len(contents[id]) > 1
+	for i, m := range all {
+		switch m.Get("role").String() {
+		case "assistant":
+			m.Get("tool_calls").ForEach(func(_, tc gjson.Result) bool {
+				if id := tc.Get("id").String(); id != "" {
+					calls[id]++
+				}
+				return true
+			})
+		case "tool":
+			id := m.Get("tool_call_id").String()
+			if id == "" {
+				continue
+			}
+			k := toolResultKey{id: id, call: calls[id]}
+			keys[i] = k
+			groups[k] = append(groups[k], m.Get("content"))
+			duplicated = duplicated || len(groups[k]) > 1
 		}
 	}
 	if !duplicated {
@@ -48,20 +72,20 @@ func (e *RequestEnvelope) coalesceOpenAIToolResults() int {
 	}
 
 	out := make([]string, 0, len(all))
-	seen := make(map[string]struct{}, len(contents))
+	seen := make(map[toolResultKey]struct{}, len(groups))
 	removed := 0
-	for _, m := range all {
-		id := openAIToolResultID(m)
-		group := contents[id]
-		if id == "" || len(group) < 2 {
+	for i, m := range all {
+		k := keys[i]
+		group := groups[k]
+		if k.id == "" || len(group) < 2 {
 			out = append(out, m.Raw)
 			continue
 		}
-		if _, ok := seen[id]; ok {
+		if _, ok := seen[k]; ok {
 			removed++
 			continue
 		}
-		seen[id] = struct{}{}
+		seen[k] = struct{}{}
 		merged, err := sjson.SetRawBytes([]byte(m.Raw), "content", []byte(mergeToolResultContents(group)))
 		if err != nil {
 			return 0
@@ -76,20 +100,20 @@ func (e *RequestEnvelope) coalesceOpenAIToolResults() int {
 	return removed
 }
 
-func openAIToolResultID(m gjson.Result) string {
-	if m.Get("role").String() != "tool" {
-		return ""
-	}
-	return m.Get("tool_call_id").String()
-}
-
-// anthropicToolResultGroup accumulates the tool_result blocks for one
-// tool_use_id in history order.
-type anthropicToolResultGroup struct {
-	contents     []gjson.Result
+// anthropicToolResult is one tool_result block; pos is its ordinal among all
+// message content blocks.
+type anthropicToolResult struct {
+	content      gjson.Result
 	isError      bool
 	cacheControl string
-	hasCache     bool
+	pos          int
+}
+
+// anthropicCacheMarker is a message block carrying a top-level cache_control.
+// key is set when that block is a tool_result.
+type anthropicCacheMarker struct {
+	pos int
+	key toolResultKey
 }
 
 func (e *RequestEnvelope) coalesceAnthropicToolResults() int {
@@ -98,28 +122,43 @@ func (e *RequestEnvelope) coalesceAnthropicToolResults() int {
 		return 0
 	}
 	all := msgs.Array()
-	groups := make(map[string]*anthropicToolResultGroup)
+	blockKeys := make([][]toolResultKey, len(all))
+	groups := make(map[toolResultKey][]anthropicToolResult)
+	var markers []anthropicCacheMarker
+	calls := make(map[string]int)
 	duplicated := false
-	for _, m := range all {
-		if m.Get("role").String() != "user" {
+	pos := 0
+	for i, m := range all {
+		role := m.Get("role").String()
+		content := m.Get("content")
+		if !content.IsArray() {
 			continue
 		}
-		m.Get("content").ForEach(func(_, block gjson.Result) bool {
-			id := anthropicToolResultID(block)
-			if id == "" {
-				return true
+		content.ForEach(func(_, block gjson.Result) bool {
+			blockPos := pos
+			pos++
+			var k toolResultKey
+			switch {
+			case role == "assistant" && block.Get("type").String() == "tool_use":
+				if id := block.Get("id").String(); id != "" {
+					calls[id]++
+				}
+			case role == "user" && block.Get("type").String() == "tool_result":
+				if id := block.Get("tool_use_id").String(); id != "" {
+					k = toolResultKey{id: id, call: calls[id]}
+					groups[k] = append(groups[k], anthropicToolResult{
+						content:      block.Get("content"),
+						isError:      block.Get("is_error").Bool(),
+						cacheControl: block.Get("cache_control").Raw,
+						pos:          blockPos,
+					})
+					duplicated = duplicated || len(groups[k]) > 1
+				}
 			}
-			g := groups[id]
-			if g == nil {
-				g = &anthropicToolResultGroup{}
-				groups[id] = g
+			blockKeys[i] = append(blockKeys[i], k)
+			if block.Get("cache_control").Exists() {
+				markers = append(markers, anthropicCacheMarker{pos: blockPos, key: k})
 			}
-			g.contents = append(g.contents, block.Get("content"))
-			g.isError = g.isError || block.Get("is_error").Bool()
-			if cc := block.Get("cache_control"); cc.Exists() && !g.hasCache {
-				g.cacheControl, g.hasCache = cc.Raw, true
-			}
-			duplicated = duplicated || len(g.contents) > 1
 			return true
 		})
 	}
@@ -128,9 +167,9 @@ func (e *RequestEnvelope) coalesceAnthropicToolResults() int {
 	}
 
 	out := make([]string, 0, len(all))
-	seen := make(map[string]struct{}, len(groups))
+	seen := make(map[toolResultKey]struct{}, len(groups))
 	removed := 0
-	for _, m := range all {
+	for i, m := range all {
 		content := m.Get("content")
 		if m.Get("role").String() != "user" || !content.IsArray() {
 			out = append(out, m.Raw)
@@ -139,20 +178,22 @@ func (e *RequestEnvelope) coalesceAnthropicToolResults() int {
 		changed := false
 		var kept []string
 		var mergeErr error
+		blockIdx := 0
 		content.ForEach(func(_, block gjson.Result) bool {
-			id := anthropicToolResultID(block)
-			g := groups[id]
-			if id == "" || len(g.contents) < 2 {
+			k := blockKeys[i][blockIdx]
+			blockIdx++
+			group := groups[k]
+			if k.id == "" || len(group) < 2 {
 				kept = append(kept, block.Raw)
 				return true
 			}
 			changed = true
-			if _, ok := seen[id]; ok {
+			if _, ok := seen[k]; ok {
 				removed++
 				return true
 			}
-			seen[id] = struct{}{}
-			merged, err := mergeAnthropicToolResultBlock(block, g)
+			seen[k] = struct{}{}
+			merged, err := mergeAnthropicToolResultBlock(block, k, group, markers)
 			if err != nil {
 				mergeErr = err
 				return false
@@ -184,29 +225,49 @@ func (e *RequestEnvelope) coalesceAnthropicToolResults() int {
 	return removed
 }
 
-func anthropicToolResultID(block gjson.Result) string {
-	if block.Get("type").String() != "tool_result" {
-		return ""
+func mergeAnthropicToolResultBlock(first gjson.Result, k toolResultKey, group []anthropicToolResult, markers []anthropicCacheMarker) (string, error) {
+	contents := make([]gjson.Result, 0, len(group))
+	isError := false
+	for _, r := range group {
+		contents = append(contents, r.content)
+		isError = isError || r.isError
 	}
-	return block.Get("tool_use_id").String()
-}
-
-func mergeAnthropicToolResultBlock(first gjson.Result, g *anthropicToolResultGroup) (string, error) {
-	out, err := sjson.SetRawBytes([]byte(first.Raw), "content", []byte(mergeToolResultContents(g.contents)))
+	out, err := sjson.SetRawBytes([]byte(first.Raw), "content", []byte(mergeToolResultContents(contents)))
 	if err != nil {
 		return "", err
 	}
-	if g.isError {
+	if isError {
 		if out, err = sjson.SetBytes(out, "is_error", true); err != nil {
 			return "", err
 		}
 	}
-	if g.hasCache && !first.Get("cache_control").Exists() {
-		if out, err = sjson.SetRawBytes(out, "cache_control", []byte(g.cacheControl)); err != nil {
+	if group[0].cacheControl != "" {
+		return string(out), nil
+	}
+	for _, r := range group[1:] {
+		if r.cacheControl == "" {
+			continue
+		}
+		// Anthropic requires 1h breakpoints before 5m ones, so a marker may only
+		// move up to the survivor when no other breakpoint sits in between.
+		if cacheMarkerBetween(markers, k, group[0].pos, r.pos) {
+			break
+		}
+		if out, err = sjson.SetRawBytes(out, "cache_control", []byte(r.cacheControl)); err != nil {
 			return "", err
 		}
+		break
 	}
 	return string(out), nil
+}
+
+func cacheMarkerBetween(markers []anthropicCacheMarker, k toolResultKey, from, to int) bool {
+	for _, m := range markers {
+		if m.pos > from && m.pos < to && m.key != k {
+			return true
+		}
+	}
+	return false
 }
 
 func textPart(text string) string {
