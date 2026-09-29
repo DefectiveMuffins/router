@@ -20,11 +20,13 @@ const (
 type Request struct {
 	Method           string              `json:"method"`
 	URL              string              `json:"url"`
+	Host             string              `json:"host,omitempty"`
 	Proto            string              `json:"proto"`
 	Header           map[string][]string `json:"headers"`
 	ContentLength    int64               `json:"content_length"`
 	TransferEncoding []string            `json:"transfer_encoding,omitempty"`
 	Body             []byte              `json:"body"`
+	BodySpool        *BodySpool          `json:"-"`
 	BodyComplete     bool                `json:"body_complete"`
 }
 
@@ -36,6 +38,8 @@ type Response struct {
 	ContentLength    int64               `json:"content_length"`
 	TransferEncoding []string            `json:"transfer_encoding,omitempty"`
 	Body             []byte              `json:"body"`
+	BodySpool        *BodySpool          `json:"-"`
+	BodyComplete     bool                `json:"body_complete"`
 }
 
 // Exchange is one complete or interrupted HTTP exchange. Byte slices are
@@ -54,7 +58,8 @@ type Exchange struct {
 	Error         string    `json:"error,omitempty"`
 }
 
-// Recorder persists an exchange. Implementations must be safe for concurrent calls.
+// Recorder persists an exchange. Implementations must be safe for concurrent calls
+// and consume any BodySpool values before Record returns.
 type Recorder interface {
 	Record(Exchange) error
 }

@@ -1,10 +1,10 @@
 package httputil
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,23 +25,31 @@ func (t *trafficCaptureRoundTripper) RoundTrip(request *http.Request) (*http.Res
 	startedAt := time.Now()
 	exchangeID, attempt := scope.NextAttempt()
 	requestBody := captureRequestBody(request)
+	requestHost := request.Host
+	if requestHost == "" {
+		requestHost = request.URL.Host
+	}
 	exchangeRequest := trafficcapture.Request{
 		Method:           request.Method,
 		URL:              request.URL.String(),
+		Host:             requestHost,
 		Proto:            request.Proto,
 		Header:           cloneHTTPHeaders(request.Header),
 		ContentLength:    request.ContentLength,
 		TransferEncoding: append([]string(nil), request.TransferEncoding...),
+		BodySpool:        requestBody.spool,
 	}
 
 	response, err := t.transport.RoundTrip(request)
-	capturedRequestBody, requestBodyComplete, bodyErr := requestBody.snapshot()
-	exchangeRequest.Body = capturedRequestBody
-	exchangeRequest.BodyComplete = requestBodyComplete
+	requestComplete, requestErr := requestBody.snapshot()
+	exchangeRequest.BodyComplete = requestComplete && requestBody.spoolError() == nil
 	if err != nil {
-		captureError := err.Error()
-		if bodyErr != nil {
-			captureError += "; request body capture failed: " + bodyErr.Error()
+		captureErrors := []string{trafficcapture.RedactRequestError(err)}
+		if requestErr != nil {
+			captureErrors = append(captureErrors, "read upstream request body: "+requestErr.Error())
+		}
+		if spoolErr := requestBody.spoolError(); spoolErr != nil {
+			captureErrors = append(captureErrors, spoolErr.Error())
 		}
 		recordUpstreamExchange(request.Context(), scope, trafficcapture.Exchange{
 			SchemaVersion: 1,
@@ -52,21 +60,22 @@ func (t *trafficCaptureRoundTripper) RoundTrip(request *http.Request) (*http.Res
 			StartedAt:     startedAt,
 			DurationMS:    time.Since(startedAt).Milliseconds(),
 			Request:       exchangeRequest,
-			Error:         captureError,
+			Error:         strings.Join(captureErrors, "; "),
 		})
+		closeBodySpool(request.Context(), exchangeID, requestBody.spool)
 		return nil, err
 	}
 
-	responseHeaders := cloneHTTPHeaders(response.Header)
 	responseRecord := trafficcapture.Response{
 		Proto:            response.Proto,
 		StatusCode:       response.StatusCode,
-		Header:           responseHeaders,
+		Header:           cloneHTTPHeaders(response.Header),
 		ContentLength:    response.ContentLength,
 		TransferEncoding: append([]string(nil), response.TransferEncoding...),
 	}
 	if response.Body == nil || response.Body == http.NoBody {
-		recordUpstreamExchange(request.Context(), scope, trafficcapture.Exchange{
+		responseRecord.BodyComplete = true
+		exchange := trafficcapture.Exchange{
 			SchemaVersion: 1,
 			ID:            exchangeID,
 			ParentID:      scope.ExchangeID(),
@@ -77,14 +86,29 @@ func (t *trafficCaptureRoundTripper) RoundTrip(request *http.Request) (*http.Res
 			Request:       exchangeRequest,
 			Response:      &responseRecord,
 			Complete:      exchangeRequest.BodyComplete,
-		})
+		}
+		if requestErr != nil {
+			exchange.Error = "read upstream request body: " + requestErr.Error()
+		}
+		if spoolErr := requestBody.spoolError(); spoolErr != nil {
+			exchange.Error = joinCaptureError(exchange.Error, spoolErr.Error())
+			exchange.Complete = false
+		}
+		recordUpstreamExchange(request.Context(), scope, exchange)
+		closeBodySpool(request.Context(), exchangeID, requestBody.spool)
 		return response, nil
 	}
 
+	responseBodySpool := &trafficcapture.BodySpool{}
 	response.Body = &trafficCaptureBody{
-		ReadCloser: response.Body,
-		finish: func(body []byte, complete bool, readErr error) {
-			responseRecord.Body = body
+		ReadCloser:     response.Body,
+		spool:          responseBodySpool,
+		expectedLength: response.ContentLength,
+		finish: func(responseComplete bool, responseErr error) {
+			requestComplete, requestBodyErr := requestBody.snapshot()
+			exchangeRequest.BodyComplete = requestComplete && requestBody.spoolError() == nil
+			responseRecord.BodySpool = responseBodySpool
+			responseRecord.BodyComplete = responseComplete && responseBodySpool.Err() == nil
 			exchange := trafficcapture.Exchange{
 				SchemaVersion: 1,
 				ID:            exchangeID,
@@ -95,71 +119,67 @@ func (t *trafficCaptureRoundTripper) RoundTrip(request *http.Request) (*http.Res
 				DurationMS:    time.Since(startedAt).Milliseconds(),
 				Request:       exchangeRequest,
 				Response:      &responseRecord,
-				Complete:      complete && exchangeRequest.BodyComplete,
+				Complete:      exchangeRequest.BodyComplete && responseRecord.BodyComplete,
 			}
-			if requestBodyErr := requestBody.readError(); requestBodyErr != nil {
-				exchange.Error = "read upstream request body for capture: " + requestBodyErr.Error()
+			if requestBodyErr != nil {
+				exchange.Error = "read upstream request body: " + requestBodyErr.Error()
 			}
-			if readErr != nil {
-				exchange.Error = "read upstream response body: " + readErr.Error()
+			if spoolErr := requestBody.spoolError(); spoolErr != nil {
+				exchange.Error = joinCaptureError(exchange.Error, spoolErr.Error())
+			}
+			if responseErr != nil {
+				exchange.Error = joinCaptureError(exchange.Error, "read upstream response body: "+responseErr.Error())
+			}
+			if spoolErr := responseBodySpool.Err(); spoolErr != nil {
+				exchange.Error = joinCaptureError(exchange.Error, spoolErr.Error())
 			}
 			recordUpstreamExchange(request.Context(), scope, exchange)
+			closeBodySpool(request.Context(), exchangeID, responseBodySpool)
+			closeBodySpool(request.Context(), exchangeID, requestBody.spool)
 		},
 	}
 	return response, nil
 }
 
-func captureRequestBody(request *http.Request) *requestBodyCapture {
-	capture := &requestBodyCapture{}
-	if request.Body == nil || request.Body == http.NoBody {
-		capture.complete = true
-		return capture
-	}
-	if request.GetBody != nil {
-		body, err := request.GetBody()
-		if err != nil {
-			capture.readErr = err
-			return capture
-		}
-		defer body.Close()
-		contents, err := io.ReadAll(body)
-		capture.body = contents
-		capture.complete = err == nil
-		capture.readErr = err
-		return capture
-	}
-	request.Body = &trafficCaptureBody{
-		ReadCloser: request.Body,
-		finish:     capture.finish,
-	}
-	return capture
-}
-
 type requestBodyCapture struct {
 	mu       sync.Mutex
-	body     []byte
+	spool    *trafficcapture.BodySpool
 	complete bool
 	readErr  error
 }
 
-func (c *requestBodyCapture) finish(body []byte, complete bool, readErr error) {
-	c.mu.Lock()
-	c.body = body
-	c.complete = complete
-	c.readErr = readErr
-	c.mu.Unlock()
+func captureRequestBody(request *http.Request) *requestBodyCapture {
+	capture := &requestBodyCapture{spool: &trafficcapture.BodySpool{}}
+	if request.Body == nil || request.Body == http.NoBody {
+		capture.complete = true
+		capture.spool = nil
+		return capture
+	}
+	request.Body = &trafficCaptureBody{
+		ReadCloser:     request.Body,
+		spool:          capture.spool,
+		expectedLength: request.ContentLength,
+		finish: func(complete bool, readErr error) {
+			capture.mu.Lock()
+			capture.complete = complete
+			capture.readErr = readErr
+			capture.mu.Unlock()
+		},
+	}
+	return capture
 }
 
-func (c *requestBodyCapture) snapshot() ([]byte, bool, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]byte(nil), c.body...), c.complete, c.readErr
+func (capture *requestBodyCapture) snapshot() (bool, error) {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return capture.complete, capture.readErr
 }
 
-func (c *requestBodyCapture) readError() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.readErr
+func (capture *requestBodyCapture) spoolError() error {
+	if capture.spool == nil {
+		return nil
+	}
+	return capture.spool.Err()
 }
 
 func cloneHTTPHeaders(headers http.Header) map[string][]string {
@@ -176,52 +196,81 @@ func recordUpstreamExchange(ctx context.Context, scope *trafficcapture.Scope, ex
 	}
 }
 
-type trafficCaptureBody struct {
-	io.ReadCloser
-	mu       sync.Mutex
-	body     bytes.Buffer
-	complete bool
-	readErr  error
-	once     sync.Once
-	finish   func([]byte, bool, error)
+func closeBodySpool(ctx context.Context, exchangeID string, spool *trafficcapture.BodySpool) {
+	if spool == nil {
+		return
+	}
+	if err := spool.Close(); err != nil {
+		observability.FromContext(ctx).Error("Failed to remove temporary local HTTP body capture", "exchange_id", exchangeID, "err", err)
+	}
 }
 
-func (b *trafficCaptureBody) Read(p []byte) (int, error) {
-	count, err := b.ReadCloser.Read(p)
-	b.mu.Lock()
+func joinCaptureError(existingError, newError string) string {
+	if existingError == "" {
+		return newError
+	}
+	return existingError + "; " + newError
+}
+
+type trafficCaptureBody struct {
+	io.ReadCloser
+	spool          *trafficcapture.BodySpool
+	expectedLength int64
+	mu             sync.Mutex
+	bytesRead      int64
+	complete       bool
+	readErr        error
+	once           sync.Once
+	finish         func(bool, error)
+}
+
+func (body *trafficCaptureBody) Read(buffer []byte) (int, error) {
+	count, err := body.ReadCloser.Read(buffer)
 	if count > 0 {
-		_, _ = b.body.Write(p[:count])
+		body.spool.Write(buffer[:count])
 	}
+	body.mu.Lock()
+	body.bytesRead += int64(count)
 	if err == io.EOF {
-		b.complete = true
+		if body.expectedLength > 0 && body.bytesRead != body.expectedLength {
+			body.readErr = io.ErrUnexpectedEOF
+		} else {
+			body.complete = true
+		}
+	} else if err == nil && body.expectedLength > 0 && body.bytesRead == body.expectedLength {
+		body.complete = true
 	} else if err != nil {
-		b.readErr = err
+		body.readErr = err
 	}
-	b.mu.Unlock()
+	body.mu.Unlock()
 	if err == io.EOF || err != nil {
-		b.finalize()
+		body.finalize()
 	}
 	return count, err
 }
 
-func (b *trafficCaptureBody) Close() error {
-	err := b.ReadCloser.Close()
+func (body *trafficCaptureBody) Close() error {
+	err := body.ReadCloser.Close()
 	if err != nil {
-		b.mu.Lock()
-		b.readErr = err
-		b.mu.Unlock()
+		body.mu.Lock()
+		body.readErr = err
+		body.mu.Unlock()
 	}
-	b.finalize()
+	body.mu.Lock()
+	if body.readErr == nil && body.expectedLength > 0 && body.bytesRead == body.expectedLength {
+		body.complete = true
+	}
+	body.mu.Unlock()
+	body.finalize()
 	return err
 }
 
-func (b *trafficCaptureBody) finalize() {
-	b.once.Do(func() {
-		b.mu.Lock()
-		body := append([]byte(nil), b.body.Bytes()...)
-		complete := b.complete
-		readErr := b.readErr
-		b.mu.Unlock()
-		b.finish(body, complete, readErr)
+func (body *trafficCaptureBody) finalize() {
+	body.once.Do(func() {
+		body.mu.Lock()
+		complete := body.complete && body.readErr == nil
+		readErr := body.readErr
+		body.mu.Unlock()
+		body.finish(complete, readErr)
 	})
 }

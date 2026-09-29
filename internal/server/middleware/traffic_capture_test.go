@@ -1,6 +1,7 @@
 package middleware_test
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,11 +14,42 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type failingResponseWriter struct {
+	gin.ResponseWriter
+	writeErr error
+}
+
+func (writer *failingResponseWriter) Write([]byte) (int, error) {
+	return 0, writer.writeErr
+}
+
 type exchangeRecorder struct {
 	exchanges []trafficcapture.Exchange
 }
 
 func (r *exchangeRecorder) Record(exchange trafficcapture.Exchange) error {
+	if exchange.Request.BodySpool != nil {
+		bodyReader, err := exchange.Request.BodySpool.Reader()
+		if err != nil {
+			return err
+		}
+		exchange.Request.Body, err = io.ReadAll(bodyReader)
+		if err != nil {
+			return err
+		}
+		exchange.Request.BodySpool = nil
+	}
+	if exchange.Response != nil && exchange.Response.BodySpool != nil {
+		bodyReader, err := exchange.Response.BodySpool.Reader()
+		if err != nil {
+			return err
+		}
+		exchange.Response.Body, err = io.ReadAll(bodyReader)
+		if err != nil {
+			return err
+		}
+		exchange.Response.BodySpool = nil
+	}
 	r.exchanges = append(r.exchanges, exchange)
 	return nil
 }
@@ -63,6 +95,9 @@ func TestWithTrafficCapturePreservesRequestAndStreamedResponse(t *testing.T) {
 	}
 	if exchange.Request.URL != "/v1/messages?beta=1" || string(exchange.Request.Body) != `{"model":"test","stream":true}` {
 		t.Fatalf("captured request = %#v", exchange.Request)
+	}
+	if exchange.Request.Host != "example.com" {
+		t.Fatalf("captured request Host = %q, want example.com", exchange.Request.Host)
 	}
 	if exchange.Request.Header["Content-Type"][0] != "application/json" || !exchange.Request.BodyComplete {
 		t.Fatalf("captured request headers/completion = %#v", exchange.Request)
@@ -135,5 +170,34 @@ func TestWithTrafficCaptureRecordsRecoveredHandlerPanic(t *testing.T) {
 	}
 	if recorder.exchanges[0].Response == nil || recorder.exchanges[0].Response.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("captured panic response = %#v", recorder.exchanges[0].Response)
+	}
+}
+
+func TestWithTrafficCaptureMarksFailedResponseWriteIncomplete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := &exchangeRecorder{}
+	writeErr := errors.New("synthetic broken pipe")
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Writer = &failingResponseWriter{ResponseWriter: c.Writer, writeErr: writeErr}
+		c.Next()
+	}, middleware.WithTrafficCapture(recorder))
+	engine.POST("/v1/messages", func(c *gin.Context) {
+		_, _ = io.Copy(io.Discard, c.Request.Body)
+		_, _ = c.Writer.Write([]byte("partial response"))
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("synthetic request"))
+	engine.ServeHTTP(httptest.NewRecorder(), request)
+
+	if len(recorder.exchanges) != 1 {
+		t.Fatalf("captured exchanges = %d, want 1", len(recorder.exchanges))
+	}
+	exchange := recorder.exchanges[0]
+	if exchange.Complete || exchange.Response == nil || exchange.Response.BodyComplete {
+		t.Fatalf("failed response write was reported complete: %#v", exchange)
+	}
+	if !strings.Contains(exchange.Error, writeErr.Error()) {
+		t.Fatalf("capture error = %q, want %q", exchange.Error, writeErr)
 	}
 }

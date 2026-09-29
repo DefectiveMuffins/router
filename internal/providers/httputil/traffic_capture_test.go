@@ -17,6 +17,28 @@ type capturedExchanges struct {
 }
 
 func (r *capturedExchanges) Record(exchange trafficcapture.Exchange) error {
+	if exchange.Request.BodySpool != nil {
+		bodyReader, err := exchange.Request.BodySpool.Reader()
+		if err != nil {
+			return err
+		}
+		exchange.Request.Body, err = io.ReadAll(bodyReader)
+		if err != nil {
+			return err
+		}
+		exchange.Request.BodySpool = nil
+	}
+	if exchange.Response != nil && exchange.Response.BodySpool != nil {
+		bodyReader, err := exchange.Response.BodySpool.Reader()
+		if err != nil {
+			return err
+		}
+		exchange.Response.Body, err = io.ReadAll(bodyReader)
+		if err != nil {
+			return err
+		}
+		exchange.Response.BodySpool = nil
+	}
 	r.exchanges = append(r.exchanges, exchange)
 	return nil
 }
@@ -68,7 +90,8 @@ func TestNewClientCapturesUpstreamRequestAndStreamedResponse(t *testing.T) {
 	if exchange.Direction != trafficcapture.DirectionUpstream || exchange.ParentID != "inbound-1" || exchange.Attempt != 1 || !exchange.Complete {
 		t.Fatalf("captured upstream metadata = %#v", exchange)
 	}
-	if !bytes.Equal(exchange.Request.Body, requestPayload) || exchange.Request.Header["Accept"][0] != "application/json" {
+	if !bytes.Equal(exchange.Request.Body, requestPayload) || exchange.Request.Header["Accept"][0] != "application/json" ||
+		exchange.Request.Host != "provider.example" {
 		t.Fatalf("captured provider request = %#v", exchange.Request)
 	}
 	if exchange.Response == nil || exchange.Response.StatusCode != http.StatusOK || !bytes.Equal(exchange.Response.Body, responsePayload) {

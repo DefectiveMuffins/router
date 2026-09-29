@@ -1506,7 +1506,8 @@ func main() {
 	port := config.GetOr("PORT", "8080")
 	address := ":" + port
 	if trafficCapture != nil {
-		address = net.JoinHostPort("127.0.0.1", port)
+		captureListenHost := config.GetOr("ROUTER_HTTP_CAPTURE_LISTEN_HOST", "127.0.0.1")
+		address = net.JoinHostPort(captureListenHost, port)
 	}
 	srv := &http.Server{
 		Addr:    address,
