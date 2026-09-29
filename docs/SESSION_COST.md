@@ -50,8 +50,11 @@ router session cost.
 
 ## Errors
 
-Error bodies are `{"message": "…", "description": "…"}`, with `description`
-included only when it adds detail.
+Error bodies from the endpoint are `{"message": "…", "description": "…"}`,
+with `description` included only when it adds detail. Authentication failures
+(`401`, and a `503` when key verification itself is unavailable) are rejected
+before the endpoint runs, so they use the router's shared authentication error
+body instead and carry no rate-limit headers.
 
 | Status | When |
 | --- | --- |
@@ -59,7 +62,7 @@ included only when it adds detail.
 | `401` | The key is missing, unknown, revoked, or neither a routing nor an analytics key. |
 | `404` | No committed telemetry for this session in the key's installation, whether it does not exist, belongs elsewhere or has not been recorded yet. |
 | `429` | The installation's rate limit is exhausted. |
-| `503` | This deployment has no telemetry storage. |
+| `503` | This deployment has no telemetry storage, or key verification is temporarily unavailable. |
 | `500` | Unexpected failure. |
 
 Telemetry commits after a request finishes, so a session's newest turn can take
@@ -69,7 +72,7 @@ a moment to appear.
 
 Each installation gets 500 requests per minute, with a burst of 500, shared by
 all of its keys. Buckets are held per router replica, so the total allowance
-grows with the replica count. Every response carries `X-RateLimit-Limit`,
-`X-RateLimit-Remaining`, `X-RateLimit-Used` and `X-RateLimit-Reset` (Unix
-seconds when the bucket is full again). A `429` also carries `Retry-After` in
-whole seconds.
+grows with the replica count. Every authenticated response carries
+`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Used` and
+`X-RateLimit-Reset` (Unix seconds when the bucket is full again). A `429` also
+carries `Retry-After` in whole seconds.
