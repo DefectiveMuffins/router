@@ -55,7 +55,7 @@ type routingDiscoveryResponse struct {
 
 // InternalRoutingDiscoveryHandler projects the current admitted managed policy.
 // The caller is authenticated by the /internal/v1 group's service token.
-func InternalRoutingDiscoveryHandler(source CurrentPolicyReader, availableProviders map[string]struct{}) gin.HandlerFunc {
+func InternalRoutingDiscoveryHandler(source CurrentPolicyReader, availableProviders map[string]struct{}, workerIdentity *policyregistry.WorkerIdentity) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxDiscoveryBodyBytes)
@@ -103,6 +103,12 @@ func InternalRoutingDiscoveryHandler(source CurrentPolicyReader, availableProvid
 			observability.FromGin(c).Warn("Managed routing discovery policy unavailable", "target", request.Target, "profile_key", request.ProfileKey, "err", err)
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "managed policy unavailable"})
 			return
+		}
+		if workerIdentity != nil {
+			if err := workerIdentity.ValidateBinding(current.Target, current.Binding); err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "managed policy unavailable on this worker"})
+				return
+			}
 		}
 		excludedModels := discoverySet(request.ExcludedModels)
 		excludedProviders := discoverySet(request.ExcludedProviders)

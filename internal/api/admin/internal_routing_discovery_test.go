@@ -40,7 +40,7 @@ func (reader *discoveryPolicyReader) ReadCurrentPolicy(_ context.Context, target
 func discoveryEngine(reader admin.CurrentPolicyReader) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	engine.POST("/internal/v1/routing-discovery", middleware.WithInternalServiceAuth("test-token"), admin.InternalRoutingDiscoveryHandler(reader, discoveryWiredProviders()))
+	engine.POST("/internal/v1/routing-discovery", middleware.WithInternalServiceAuth("test-token"), admin.InternalRoutingDiscoveryHandler(reader, discoveryWiredProviders(), nil))
 	return engine
 }
 
@@ -234,4 +234,36 @@ func TestInternalRoutingDiscoveryReportsEveryProviderBinding(t *testing.T) {
 		}
 	}
 	assert.Equal(t, providers, catalogProviders)
+}
+
+func TestInternalRoutingDiscoveryRequiresCurrentPolicyToMatchWorker(t *testing.T) {
+	reader := discoveryFixture()
+	configuration := policyregistry.ObjectRef{
+		URI: "gs://test-bucket/configuration.json", SHA256: strings.Repeat("a", 64), Generation: 1,
+	}
+	identity := policyregistry.WorkerIdentity{
+		Target: policyregistry.TargetStable, Project: "project", Region: "region",
+		Revision: "worker-0001", ImageDigest: "sha256:" + strings.Repeat("b", 64), Configuration: configuration,
+	}
+	reader.current.Binding = policyregistry.LaneBinding{
+		Project: identity.Project, Region: identity.Region,
+		Router: policyregistry.RevisionBinding{Name: identity.Revision, ImageDigest: identity.ImageDigest, Configuration: configuration},
+	}
+	engine := gin.New()
+	engine.POST("/internal/v1/routing-discovery", middleware.WithInternalServiceAuth("test-token"), admin.InternalRoutingDiscoveryHandler(reader, discoveryWiredProviders(), &identity))
+	requestBody := `{"target":"prod/stable","grid":2}`
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, discoveryRequest(requestBody, "test-token"))
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+	reader.current.Binding.Router.ImageDigest = "sha256:" + strings.Repeat("c", 64)
+	recorder = httptest.NewRecorder()
+	engine.ServeHTTP(recorder, discoveryRequest(requestBody, "test-token"))
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+
+	reader.current.Binding.Router.ImageDigest = identity.ImageDigest
+	reader.current.Target = policyregistry.TargetInternal
+	recorder = httptest.NewRecorder()
+	engine.ServeHTTP(recorder, discoveryRequest(requestBody, "test-token"))
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 }

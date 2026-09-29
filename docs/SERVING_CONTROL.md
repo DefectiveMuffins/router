@@ -18,8 +18,11 @@ registry writer. The kept list is at the end of this document.
 
 ### Internal routing discovery
 
-Managed router services expose `POST /internal/v1/routing-discovery` to the
-Weave control plane when `ROUTER_INTERNAL_SERVICE_TOKEN` is configured. Calls
+The managed gateway accepts `POST /internal/v1/routing-discovery` from the
+Weave control plane when `ROUTER_INTERNAL_SERVICE_TOKEN` is configured. It
+authenticates the token, resolves the current target/profile binding, and
+forwards to that binding's worker, which verifies its attested target and image
+before projecting the policy. Calls
 must supply `X-Weave-Internal-Token`. The JSON body contains `target` (`staging`,
 `prod/stable`, or `prod/weave-internal`), optional opaque `profile_key`, optional
 `grid` in `[2, 101]`, and optional `excluded_models` and `excluded_providers`

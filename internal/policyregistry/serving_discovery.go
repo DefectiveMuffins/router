@@ -19,6 +19,7 @@ type CurrentPolicy struct {
 	CandidateSHA256    string
 	PolicySHA256       string
 	Roster             *rosterdata.Roster
+	Binding            LaneBinding
 }
 
 // CurrentPolicySource reads the authoritative target state for internal discovery.
@@ -73,5 +74,6 @@ func (source CurrentPolicySource) ReadCurrentPolicy(ctx context.Context, target 
 		CandidateSHA256:    selection.Release.SHA256,
 		PolicySHA256:       prepared.Candidate.Policy.SHA256,
 		Roster:             prepared.Policy,
+		Binding:            prepared.Binding,
 	}, nil
 }
