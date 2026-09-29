@@ -66,7 +66,10 @@ def run_command(
     def interrupt(signum, frame):
         raise KeyboardInterrupt
 
-    previous_terminate = signal.signal(signal.SIGTERM, interrupt)
+    previous_terminate = signal.getsignal(signal.SIGTERM)
+    # Teardown may deliberately ignore cancellation while finishing owned work.
+    if previous_terminate != signal.SIG_IGN:
+        signal.signal(signal.SIGTERM, interrupt)
     try:
         child = subprocess.Popen(command, start_new_session=True, **options)
         try:

@@ -33,6 +33,7 @@ class FakeFailure(StrEnum):
     SEED = "seed"
     DOWN = "down"
     BUILD = "build"
+    CANCEL_CLEANUP = "cancel-cleanup"
 
 
 FAKE_TOOL = r"""#!/usr/bin/env python3
@@ -110,6 +111,11 @@ elif "run" in args:
 elif "down" in args:
     if failure == FakeFailure.DOWN:
         sys.exit(6)
+    if failure == FakeFailure.CANCEL_CLEANUP:
+        os.kill(os.getppid(), signal.SIGINT)
+        time.sleep(0.05)
+        os.kill(os.getppid(), signal.SIGTERM)
+        time.sleep(0.05)
     (root / project).unlink(missing_ok=True)
 """.replace("# FAILURE_ENUM", inspect.getsource(FakeFailure))
 
@@ -221,6 +227,21 @@ class SmokeRunnerTest(unittest.TestCase):
         self.assertEqual(self.run_smoke().returncode, 0)
         projects = {call["project"] for call in self.calls() if "project" in call}
         self.assertEqual(len(projects), 2)
+
+    def test_cancellation_during_teardown_finishes_resource_and_directory_cleanup(
+        self,
+    ) -> None:
+        completed = self.run_smoke(FAKE_FAIL=FakeFailure.CANCEL_CLEANUP.value)
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        calls = self.calls()
+        teardown = next(call for call in calls if "down" in call["args"])
+        self.assertFalse(Path(teardown["override_path"]).parent.exists())
+        self.assertEqual(3, sum(call["args"][:2] == ["image", "rm"] for call in calls))
+        self.assertFalse(list(self.state.glob("router-smoke-*")))
+        self.assertEqual(
+            "unrelated developer resources",
+            (self.state / "developer-stack").read_text(),
+        )
 
     def test_direct_runner_strips_ambient_flags_credentials_and_live_database(
         self,

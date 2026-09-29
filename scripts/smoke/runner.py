@@ -514,12 +514,21 @@ def main() -> int:
         exit_code = 1
     finally:
         if smoke:
+            # Cancellation must not cut short a teardown already in progress.
+            # Individual cleanup commands retain their bounded deadlines.
+            previous_handlers = {
+                signum: signal.signal(signum, signal.SIG_IGN)
+                for signum in (signal.SIGINT, signal.SIGTERM)
+            }
             try:
                 smoke.cleanup()
                 smoke.summary()
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 log(f"cleanup failed; state retained at {smoke.directory}: {error}")
                 exit_code = 1
+            finally:
+                for signum, previous in previous_handlers.items():
+                    signal.signal(signum, previous)
     return exit_code
 
 
