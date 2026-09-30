@@ -16,11 +16,11 @@ import sys
 args = sys.argv[1:]
 
 
-def emit(value):
-    print(json.dumps(value))
+def emit(payload):
+    print(json.dumps(payload))
 
 
-def value(prefix):
+def argument_value(prefix):
     return next((arg[len(prefix):] for arg in args if arg.startswith(prefix)), "")
 
 
@@ -45,9 +45,9 @@ elif args[:2] == ["pr", "checks"]:
     emit([])
 elif args[:2] == ["api", "graphql"]:
     count = int(os.environ.get("THREAD_COMMENT_COUNT", "101"))
-    query = value("query=")
+    query = argument_value("query=")
     if "$threadId" in query:
-        start = int(value("after=cursor-") or "0")
+        start = int(argument_value("after=cursor-") or "0")
         end = min(start + 100, count)
         emit({
             "data": {
@@ -147,9 +147,9 @@ class PRFixPlanTest(unittest.TestCase):
             )
 
     def test_plan_includes_all_thread_replies_and_changed_paths(self):
-        result = self.run_analyzer()
-        self.assertEqual(0, result.returncode, result.stderr)
-        plan = json.loads(result.stdout)
+        analyzer_result = self.run_analyzer()
+        self.assertEqual(0, analyzer_result.returncode, analyzer_result.stderr)
+        plan = json.loads(analyzer_result.stdout)
 
         self.assertEqual(
             ["assets/fixture.bin", "deleted.txt", "src/fixture.go"],
@@ -162,11 +162,11 @@ class PRFixPlanTest(unittest.TestCase):
         self.assertIn("reply-100", thread["body"])
 
     def test_feedback_fetch_failures_are_reported_in_successful_plan(self):
-        result = self.run_analyzer(
+        analyzer_result = self.run_analyzer(
             FAIL_REVIEWS="1", FAIL_CONVERSATION_COMMENTS="1"
         )
-        self.assertEqual(0, result.returncode, result.stderr)
-        plan = json.loads(result.stdout)
+        self.assertEqual(0, analyzer_result.returncode, analyzer_result.stderr)
+        plan = json.loads(analyzer_result.stdout)
 
         self.assertTrue(plan["reviews_fetch_failed"])
         self.assertTrue(plan["conversation_comments_fetch_failed"])

@@ -303,7 +303,7 @@ fetch_review_threads() {
 }
 
 fetch_thread_replies() {
-  local out=$1 err=$2 thread_index thread_id cursor page page_file extra_file tmp_file verdict complete
+  local out=$1 err=$2 thread_index thread_id cursor page page_file replies_file tmp_file verdict complete
   local -a args page_files
   while IFS=$'\t' read -r thread_index thread_id cursor; do
     page_files=()
@@ -330,10 +330,10 @@ fetch_thread_replies() {
       echo "Review thread $thread_id has more than $((MAX_THREAD_COMMENT_PAGES * 100)) comments; refusing to paginate further" >"$err"
       return 1
     fi
-    extra_file=$(printf '%s/thread-comments-%03d.json' "$WORK_DIR" "$thread_index")
+    replies_file=$(printf '%s/thread-comments-%03d.json' "$WORK_DIR" "$thread_index")
     tmp_file="$WORK_DIR/threads.updated.json"
-    jq -s "$THREAD_REPLIES_MERGE" "${page_files[@]}" >"$extra_file" || return 1
-    jq --argjson index "$thread_index" --slurpfile extra "$extra_file" \
+    jq -s "$THREAD_REPLIES_MERGE" "${page_files[@]}" >"$replies_file" || return 1
+    jq --argjson index "$thread_index" --slurpfile extra "$replies_file" \
       '.threads[$index].comments += $extra[0] | .threads[$index].comments_has_next_page = false | .threads[$index].comments_end_cursor = ""' \
       "$out" >"$tmp_file" || return 1
     mv "$tmp_file" "$out"
