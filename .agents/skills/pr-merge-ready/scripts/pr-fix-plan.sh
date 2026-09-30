@@ -174,6 +174,7 @@ gh_or_fail() {
 # the connection, so a single unpaginated page goes permanently blind to new
 # threads once a PR accumulates 100 total threads — follow pageInfo until
 # exhausted. A null $after fetches the first page.
+# shellcheck disable=SC2016
 readonly REVIEW_THREADS_QUERY='
 query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
   repository(owner: $owner, name: $repo) {
@@ -202,6 +203,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
 # Emits "done", "next:<cursor>", or "error:<message>" for one GraphQL page.
 # A null pullRequest (wrong owner/repo, missing PR, no access) comes back as
 # success, and a missing nodes/pageInfo must not be read as a final page.
+# shellcheck disable=SC2016
 readonly THREAD_PAGE_VERDICT='
 .data.repository.pullRequest as $pull
 | if $pull == null then "error:PR #\($pr) not found on \($slug) (or no access)"
@@ -240,6 +242,7 @@ readonly THREAD_PAGES_MERGE='
   ]
 }'
 
+# shellcheck disable=SC2016
 readonly THREAD_REPLIES_QUERY='
 query($threadId: ID!, $after: String) {
   node(id: $threadId) {
@@ -252,6 +255,7 @@ query($threadId: ID!, $after: String) {
   }
 }'
 
+# shellcheck disable=SC2016
 readonly THREAD_REPLIES_PAGE_VERDICT='
 .data.node as $thread
 | if $thread == null then "error:Review thread not found"
@@ -404,6 +408,7 @@ failure_reason() {
 # Fix-plan assembly (pure jq over the fetched data)
 # ============================================================================
 
+# shellcheck disable=SC2016
 readonly BUILD_FIX_PLAN='
 def strip: sub("\\A\\s+"; "") | sub("\\s+\\z"; "");
 
@@ -628,6 +633,7 @@ def top_level_comments($reviews; $issue_comments):
   + (if $conversation_comments_fetch_failed then {conversation_comments_fetch_failed: true} else {} end)
 '
 
+# shellcheck disable=SC2016
 readonly RENDER_HUMAN='
 def bar: "════════════════════════════════════════════════════════════";
 

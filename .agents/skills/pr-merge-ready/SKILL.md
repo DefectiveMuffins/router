@@ -411,10 +411,10 @@ loop:
     break → Step 1   # reply on an existing unresolved thread
 
   if sentinel.latest_review_timestamp > last_seen_review_timestamp:
-    break → Step 1   # new or updated top-level review body
+    break → Step 1
 
   if sentinel.latest_conversation_comment_timestamp > last_seen_conversation_comment_timestamp:
-    break → Step 1   # new or updated conversation comment
+    break → Step 1
 
   # Dispatch check ONCE after the first sentinel cycle, not every tick
   if not yet validated dispatch:
