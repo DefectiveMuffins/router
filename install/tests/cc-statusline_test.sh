@@ -226,14 +226,14 @@ JSONL
 out="$(WEAVE_STATUSLINE_UPDATE=0 WEAVE_ROUTER_KEY=rk_synthetic \
   WEAVE_ROUTER_BASE_URL="file://$c/display-settings.json" \
   render "$c/cc.sh" "$c/cache" "file://$upstream" deepseek/deepseek-v4-pro "$c/duplicate.jsonl")"
-check_contains "more expensive transcript preserves a signed comparison" "$out" 'est. cost difference -$0.08'
+check_contains "more expensive transcript preserves a signed comparison" "$out" "est. cost difference -\$0.08"
 check_contains "content-block copies do not inflate transcript tokens" "$out" "10.0k in / 2.0k out"
 
 jq -c '.message.usage = {input_tokens:100,output_tokens:20}' "$c/duplicate.jsonl" > "$c/tiny-difference.jsonl"
 out="$(WEAVE_STATUSLINE_UPDATE=0 WEAVE_ROUTER_KEY=rk_synthetic \
   WEAVE_ROUTER_BASE_URL="file://$c/display-settings.json" \
   render "$c/cc.sh" "$c/cache" "file://$upstream" deepseek/deepseek-v4-pro "$c/tiny-difference.jsonl")"
-check_contains "sub-cent negative comparison keeps its sign" "$out" 'est. cost difference -<$0.01'
+check_contains "sub-cent negative comparison keeps its sign" "$out" "est. cost difference -<\$0.01"
 
 # Pin the hypothetical price comparison independently of routing verification.
 c="$work/c1"; mkdir -p "$c/cache"; make_installed "$c/cc.sh"
