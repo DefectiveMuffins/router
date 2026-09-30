@@ -242,6 +242,32 @@ check_contains "priced selection reports the estimated difference" "$out" "est. 
 check_contains "priced selection still names the routed model" "$out" "deepseek/deepseek-v4-pro"
 check "priced selection writes no miss stamp" "$(count_stamps "$c/cache" .miss.)" 0
 
+for sentinel_model in '<synthetic>' weave-router; do
+  jq -cn --arg model "$sentinel_model" '{type:"assistant",message:{id:"msg_control",model:$model,usage:{input_tokens:5000,output_tokens:3000}}}' > "$c/sentinel.jsonl"
+  cat "$transcript" >> "$c/sentinel.jsonl"
+  out="$(WEAVE_STATUSLINE_UPDATE=0 render "$c/cc.sh" "$c/cache" "file://$upstream" "$STALE_MODEL" "$c/sentinel.jsonl")"
+  check_contains "$sentinel_model does not poison later inference estimates" "$out" "est. cost difference \$0.08"
+  check_contains "$sentinel_model does not inflate inference token totals" "$out" "10.0k in / 2.0k out"
+  check_contains "$sentinel_model followed by inference still does not verify routing" "$out" "routing unverified"
+
+  head -n 1 "$c/sentinel.jsonl" > "$c/sentinel-only.jsonl"
+  out="$(WEAVE_STATUSLINE_UPDATE=0 render "$c/cc.sh" "$c/cache" "file://$upstream" "$STALE_MODEL" "$c/sentinel-only.jsonl")"
+  check_not_contains "$sentinel_model alone does not invent an estimate" "$out" "est. cost difference"
+  check_not_contains "$sentinel_model alone does not count as inference tokens" "$out" " in / "
+done
+
+jq -c 'select(.type == "assistant") | .message.model = "model-nobody-prices"' "$transcript" > "$c/unpriced.jsonl"
+out="$(WEAVE_STATUSLINE_UPDATE=0 render "$c/cc.sh" "$c/cache" "file://$upstream" model-nobody-prices "$c/unpriced.jsonl")"
+check_not_contains "same unpriced model does not invent a zero comparison" "$out" "est. cost difference"
+check_contains "same unpriced model preserves inference token totals" "$out" "10.0k in / 2.0k out"
+
+cat "$transcript" >> "$c/unpriced.jsonl"
+out="$(WEAVE_STATUSLINE_UPDATE=0 render "$c/cc.sh" "$c/cache" "file://$upstream" "$STALE_MODEL" "$c/unpriced.jsonl")"
+check_not_contains "unpriced inference still prevents a session estimate" "$out" "est. cost difference"
+
+out="$(WEAVE_STATUSLINE_UPDATE=0 render "$c/cc.sh" "$c/cache" "file://$upstream" deepseek/deepseek-v4-pro)"
+check_contains "same priced model retains a zero comparison" "$out" "est. cost difference \$0.00"
+
 # Cache-heavy routes must price each side with its own catalog multiplier.
 c="$work/c-cache"; mkdir -p "$c/cache"; make_installed "$c/cc.sh"
 out="$(render "$c/cc.sh" "$c/cache" "file://$upstream" "gpt-5.4-pro" "$cache_transcript")"

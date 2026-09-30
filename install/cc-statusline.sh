@@ -449,7 +449,6 @@ selected_display="$(printf '%s' "$input" | jq -r '.model.id // .model.display_na
 #   * date suffix:    claude-opus-4-7-20260101  → claude-opus-4-7
 #   * variant tag:    claude-opus-4-7[1m]       → claude-opus-4-7
 # This estimate compares base model prices, not context-tier surcharges.
-# Normalize both transcript models and the current selection consistently.
 normalize_model() {
   printf '%s' "$1" | sed -E 's/\[[^]]*\]$//; s/-[0-9]{8}$//'
 }
@@ -806,7 +805,6 @@ if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
     last_pin_model="${force_state#APPLIED }"
   fi
 
-  # Compare the transcript's token costs with the current selected model.
   # Missing prices leave the comparison unknown without hiding token totals.
   #
   # Dedup note: CC writes one JSONL entry per *content block* in an
@@ -823,7 +821,7 @@ if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
   #     genuine retry/duplicate we want to drop.
   read -r session_cost_difference tot_in tot_out tot_cache_read tot_cache_write < <(
     jq -rs --argjson p "$prices" --arg requested "$requested_norm" '
-      [.[] | select(.type=="assistant")] |
+      [.[] | select(.type=="assistant" and .message.model!="<synthetic>" and .message.model!="weave-router")] |
       unique_by([.message.id, .message.usage]) |
       .[] |
       .message as $m |
@@ -834,7 +832,7 @@ if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
         cwrt:  ($m.usage.cache_creation_input_tokens // 0),
         crd:   ($m.usage.cache_read_input_tokens // 0)
       } as $t |
-      (if ($t.in + $t.out + $t.cwrt + $t.crd) == 0 or $requested == $rm then 0
+      (if ($t.in + $t.out + $t.cwrt + $t.crd) == 0 then 0
        else
          ($p.input[$rm] // null)             as $rin  | ($p.output[$rm] // null)             as $rout |
          ($p.cache_read[$rm] // null)        as $rcr  |
@@ -853,9 +851,9 @@ if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
       "\(if $savings == null then "unknown" else $savings end) \($t.in) \($t.out) \($t.crd) \($t.cwrt)"
     ' "$transcript_path" 2>/dev/null \
     | awk 'BEGIN{s=0; i=0; o=0; r=0; w=0}
-           {if ($1 == "unknown") unknown=1; else s+=$1; i+=$2; o+=$3; r+=$4; w+=$5}
+           {if ($1 == "unknown") comparison_unknown=1; else s+=$1; i+=$2; o+=$3; r+=$4; w+=$5}
            END{
-             if (NR == 0 || unknown) printf "unknown"; else printf "%.4f", s;
+             if (NR == 0 || comparison_unknown) printf "unknown"; else printf "%.4f", s;
              printf " %d %d %d %d\n", i, o, r, w
            }'
   ) || true
