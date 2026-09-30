@@ -1,1 +1,0 @@
-DROP INDEX CONCURRENTLY router.model_router_request_reporting_time_idx;
