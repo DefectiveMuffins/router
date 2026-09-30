@@ -5,7 +5,7 @@ description: Addresses all review comments on a PR automatically. Escalates genu
 
 # PR Merge Ready (one pass, then validate once)
 
-This is the PR merge-ready workflow. It follows the same merge-ready loop (threads resolved, reviewers done, CI green) with a **speed contract**:
+It follows the same merge-ready loop (threads resolved, reviewers done, CI green) with a **speed contract**:
 
 1. **Triage every open thread before editing any file.**
 2. **Apply every Fix in one pass** (group by file; one file is opened/edited once).

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# pr-fix-plan.sh — turn a GitHub PR's unresolved review feedback into a fix plan.
 #
 # Fetches the PR's review threads, diff, CI checks, and PR-level comments via
 # the GitHub CLI (in parallel), then cross-references each unresolved comment's
@@ -264,10 +263,6 @@ fetch_review_threads() {
   return 1
 }
 
-fetch_diff() {
-  gh_or_fail "$2" pr diff "$PR_NUMBER" --repo "$OWNER/$REPO" >"$1"
-}
-
 # Reviews come back oldest-first, so stopping at page one would hide the
 # NEWEST reviews once a PR exceeds one page.
 fetch_reviews() {
@@ -494,7 +489,7 @@ def top_level_comments($reviews; $issue_comments):
     | (.path | extension) as $ext
     | .lines | to_entries[]
     | {file: $file, ext: $ext, line: (.key | tonumber), code: .value, pattern: (.value | strip)} ] as $pattern_index
-| $review_data[0] as $pull
+| $thread_data[0] as $pull
 | [ $pull.threads[] | select(.is_resolved | not) ] as $unresolved
 | ( [ $unresolved[]
       | (if .path != null and .line != null then code_at($files; .path; .line) else null end) as $code_context
@@ -635,7 +630,7 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 fetch_review_threads "$WORK_DIR/threads.json" "$WORK_DIR/threads.err" &
 threads_pid=$!
-fetch_diff "$WORK_DIR/diff.txt" "$WORK_DIR/diff.err" &
+gh_or_fail "$WORK_DIR/diff.err" pr diff "$PR_NUMBER" --repo "$OWNER/$REPO" >"$WORK_DIR/diff.txt" &
 diff_pid=$!
 fetch_checks "$WORK_DIR/checks.json" "$WORK_DIR/checks.err" &
 checks_pid=$!
@@ -682,7 +677,7 @@ jq -n \
   --arg current_sha "$current_sha" \
   --argjson max_comments "$MAX_COMMENTS" \
   --argjson checks_fetch_failed "$checks_fetch_failed" \
-  --slurpfile review_data "$WORK_DIR/threads.json" \
+  --slurpfile thread_data "$WORK_DIR/threads.json" \
   --rawfile diff "$WORK_DIR/diff.txt" \
   --slurpfile checks "$WORK_DIR/checks.json" \
   --slurpfile reviews "$WORK_DIR/reviews.json" \
