@@ -18,6 +18,7 @@ set -euo pipefail
 
 readonly MAX_THREAD_PAGES=20
 readonly THREADS_PER_PAGE=100
+readonly MAX_THREAD_COMMENT_PAGES=20
 readonly MAX_REVIEW_PAGES=20
 readonly REVIEWS_PER_PAGE=100
 readonly GH_TIMEOUT_SECS=60
@@ -46,8 +47,7 @@ JSON output fields:
                          related_lines_in_pr, thread_comments
   top_level_comments[] (omitted when empty): source, author, body, url, created_at
   pattern_summary, checks, checks_summary,
-  checks_fetch_failed (only when the checks fetch failed — an empty checks
-                       list then does NOT mean CI is clean)
+  *_fetch_failed (when a best-effort feedback or checks fetch fails)
 EOF
 }
 
@@ -189,7 +189,8 @@ query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
           path
           line
           startLine
-          comments(first: 50) {
+          comments(first: 100) {
+            pageInfo { hasNextPage endCursor }
             nodes { body url author { login } }
           }
         }
@@ -206,6 +207,10 @@ readonly THREAD_PAGE_VERDICT='
 | if $pull == null then "error:PR #\($pr) not found on \($slug) (or no access)"
   elif $pull.reviewThreads.nodes == null or $pull.reviewThreads.pageInfo == null then
     "error:Malformed reviewThreads connection for PR #\($pr) (missing nodes or pageInfo)"
+  elif any($pull.reviewThreads.nodes[]; .comments.nodes == null or .comments.pageInfo == null) then
+    "error:Malformed thread comments connection for PR #\($pr) (missing nodes or pageInfo)"
+  elif any($pull.reviewThreads.nodes[]; .comments.pageInfo.hasNextPage == true and (.comments.pageInfo.endCursor // "") == "") then
+    "error:Thread comments reported hasNextPage without an endCursor"
   elif $pull.reviewThreads.pageInfo.hasNextPage != true then "done"
   elif ($pull.reviewThreads.pageInfo.endCursor // "") == "" then
     "error:PR #\($pr) reviewThreads reported hasNextPage without an endCursor"
@@ -226,12 +231,41 @@ readonly THREAD_PAGES_MERGE='
         line,
         start_line: .startLine,
         comments: [
-          (.comments.nodes // [])[]
+          .comments.nodes[]
           | {author: (.author.login // "ghost"), body: (.body // ""), url: (.url // "")}
-        ]
+        ],
+        comments_has_next_page: (.isResolved != true and .comments.pageInfo.hasNextPage == true),
+        comments_end_cursor: (.comments.pageInfo.endCursor // "")
       }
   ]
 }'
+
+readonly THREAD_REPLIES_QUERY='
+query($threadId: ID!, $after: String) {
+  node(id: $threadId) {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes { body url author { login } }
+      }
+    }
+  }
+}'
+
+readonly THREAD_REPLIES_PAGE_VERDICT='
+.data.node as $thread
+| if $thread == null then "error:Review thread not found"
+  elif $thread.comments.nodes == null or $thread.comments.pageInfo == null then
+    "error:Malformed review-thread comments response (missing nodes or pageInfo)"
+  elif $thread.comments.pageInfo.hasNextPage != true then "done"
+  elif ($thread.comments.pageInfo.endCursor // "") == "" then
+    "error:Review-thread comments reported hasNextPage without an endCursor"
+  else "next:\($thread.comments.pageInfo.endCursor)"
+  end'
+
+readonly THREAD_REPLIES_MERGE='
+[.[].data.node.comments.nodes[]
+ | {author: (.author.login // "ghost"), body: (.body // ""), url: (.url // "")}]'
 
 fetch_review_threads() {
   local out=$1 err=$2 cursor="" page page_file verdict
@@ -249,8 +283,9 @@ fetch_review_threads() {
     fi
     case $verdict in
       done)
-        jq -s "$THREAD_PAGES_MERGE" "$WORK_DIR"/threads-*.json >"$out"
-        return
+        jq -s "$THREAD_PAGES_MERGE" "$WORK_DIR"/threads-*.json >"$out" || return 1
+        fetch_thread_replies "$out" "$err"
+        return $?
         ;;
       next:*) cursor=${verdict#next:} ;;
       *)
@@ -261,6 +296,56 @@ fetch_review_threads() {
   done
   echo "PR #$PR_NUMBER has more than $((MAX_THREAD_PAGES * THREADS_PER_PAGE)) review threads; refusing to paginate further" >"$err"
   return 1
+}
+
+fetch_thread_replies() {
+  local out=$1 err=$2 thread_index thread_id cursor page page_file extra_file tmp_file verdict complete
+  local -a args page_files
+  while IFS=$'\t' read -r thread_index thread_id cursor; do
+    page_files=()
+    complete=false
+    for ((page = 1; page <= MAX_THREAD_COMMENT_PAGES; page++)); do
+      page_file=$(printf '%s/thread-comments-%03d-%03d.json' "$WORK_DIR" "$thread_index" "$page")
+      args=(api graphql -f "query=$THREAD_REPLIES_QUERY" -f "threadId=$thread_id")
+      if [[ -n $cursor ]]; then
+        args+=(-f "after=$cursor")
+      fi
+      gh_or_fail "$err" "${args[@]}" >"$page_file" || return 1
+      if ! verdict=$(jq -r "$THREAD_REPLIES_PAGE_VERDICT" "$page_file" 2>"$err.stderr"); then
+        echo "Failed to parse review-thread comments: $(cat "$err.stderr")" >"$err"
+        return 1
+      fi
+      page_files+=("$page_file")
+      case $verdict in
+        done) complete=true; break ;;
+        next:*) cursor=${verdict#next:} ;;
+        *) echo "${verdict#error:}" >"$err"; return 1 ;;
+      esac
+    done
+    if [[ $complete != true ]]; then
+      echo "Review thread $thread_id has more than $((MAX_THREAD_COMMENT_PAGES * 100)) comments; refusing to paginate further" >"$err"
+      return 1
+    fi
+    extra_file=$(printf '%s/thread-comments-%03d.json' "$WORK_DIR" "$thread_index")
+    tmp_file="$WORK_DIR/threads.updated.json"
+    jq -s "$THREAD_REPLIES_MERGE" "${page_files[@]}" >"$extra_file" || return 1
+    jq --argjson index "$thread_index" --slurpfile extra "$extra_file" \
+      '.threads[$index].comments += $extra[0] | .threads[$index].comments_has_next_page = false | .threads[$index].comments_end_cursor = ""' \
+      "$out" >"$tmp_file" || return 1
+    mv "$tmp_file" "$out"
+  done < <(jq -r '.threads | to_entries[] | select(.value.comments_has_next_page) | [.key, .value.id, .value.comments_end_cursor] | @tsv' "$out")
+  jq '.threads |= map(del(.comments_has_next_page, .comments_end_cursor))' "$out" >"$WORK_DIR/threads.cleaned.json" || return 1
+  mv "$WORK_DIR/threads.cleaned.json" "$out"
+}
+
+# The PR file list includes deletions and binaries absent from the unified diff.
+fetch_changed_files() {
+  local out=$1 err=$2 raw_file="$WORK_DIR/changed-files.raw"
+  gh_or_fail "$err" api --paginate "repos/$OWNER/$REPO/pulls/$PR_NUMBER/files?per_page=100" >"$raw_file" || return 1
+  if ! jq -s 'add // [] | map(.filename) | unique | sort' "$raw_file" >"$out" 2>"$err.stderr"; then
+    echo "Failed to parse changed files: $(cat "$err.stderr")" >"$err"
+    return 1
+  fi
 }
 
 # Reviews come back oldest-first, so stopping at page one would hide the
@@ -522,7 +607,7 @@ def top_level_comments($reviews; $issue_comments):
     head_branch: $pull.head_branch,
     head_sha: $pull.head_sha,
     is_checked_out: ($current_sha != "" and $current_sha == $pull.head_sha),
-    changed_files: [$files[].path],
+    changed_files: $changed_files[0],
     unresolved_comments: [$collapsed[:$cap][] | comment_output]
   }
   + (if $top_level == [] then {} else {top_level_comments: $top_level} end)
@@ -539,6 +624,8 @@ def top_level_comments($reviews; $issue_comments):
       checks_summary: ($checks[0] | checks_summary)
     }
   + (if $checks_fetch_failed then {checks_fetch_failed: true} else {} end)
+  + (if $reviews_fetch_failed then {reviews_fetch_failed: true} else {} end)
+  + (if $conversation_comments_fetch_failed then {conversation_comments_fetch_failed: true} else {} end)
 '
 
 readonly RENDER_HUMAN='
@@ -578,6 +665,7 @@ def checks_lines:
   bar,
   "  Branch: \(.head_branch) (\(if .is_checked_out then "checked out"
       else "NOT checked out — current: \(if $current_branch == "" then "unknown" else $current_branch end)" end))",
+  (if (.reviews_fetch_failed // false) or (.conversation_comments_fetch_failed // false) then "  WARNING: PR feedback is incomplete; do not treat this plan as complete." else empty end),
   "",
   "  Changed Files (\(.changed_files | length)):",
   (.changed_files[] | "    " + .),
@@ -632,6 +720,8 @@ fetch_review_threads "$WORK_DIR/threads.json" "$WORK_DIR/threads.err" &
 threads_pid=$!
 gh_or_fail "$WORK_DIR/diff.err" pr diff "$PR_NUMBER" --repo "$OWNER/$REPO" >"$WORK_DIR/diff.txt" &
 diff_pid=$!
+fetch_changed_files "$WORK_DIR/changed-files.json" "$WORK_DIR/changed-files.err" &
+files_pid=$!
 fetch_checks "$WORK_DIR/checks.json" "$WORK_DIR/checks.err" &
 checks_pid=$!
 fetch_reviews "$WORK_DIR/reviews.json" "$WORK_DIR/reviews.err" &
@@ -642,14 +732,16 @@ comments_pid=$!
 current_branch=$(git branch --show-current 2>/dev/null || true)
 current_sha=$(git rev-parse HEAD 2>/dev/null || true)
 
-# Threads and diff are required; checks, reviews, and conversation comments
-# are best-effort and must not sink the plan.
+# Threads, diff, and changed-file metadata are required to build a complete plan.
 fatal_error=""
 if ! wait "$threads_pid"; then
   fatal_error=$(failure_reason "$WORK_DIR/threads.err")
 fi
 if ! wait "$diff_pid" && [[ -z $fatal_error ]]; then
   fatal_error=$(failure_reason "$WORK_DIR/diff.err")
+fi
+if ! wait "$files_pid" && [[ -z $fatal_error ]]; then
+  fatal_error=$(failure_reason "$WORK_DIR/changed-files.err")
 fi
 
 checks_fetch_failed=false
@@ -658,13 +750,17 @@ if ! wait "$checks_pid"; then
   echo '[]' >"$WORK_DIR/checks.json"
   checks_fetch_failed=true
 fi
+reviews_fetch_failed=false
 if ! wait "$reviews_pid"; then
   warn "could not fetch reviews: $(failure_reason "$WORK_DIR/reviews.err")"
   echo '[]' >"$WORK_DIR/reviews.json"
+  reviews_fetch_failed=true
 fi
+conversation_comments_fetch_failed=false
 if ! wait "$comments_pid"; then
   warn "could not fetch comments: $(failure_reason "$WORK_DIR/issue-comments.err")"
   echo '[]' >"$WORK_DIR/issue-comments.json"
+  conversation_comments_fetch_failed=true
 fi
 
 [[ -z $fatal_error ]] || die "$fatal_error"
@@ -677,7 +773,10 @@ jq -n \
   --arg current_sha "$current_sha" \
   --argjson max_comments "$MAX_COMMENTS" \
   --argjson checks_fetch_failed "$checks_fetch_failed" \
+  --argjson reviews_fetch_failed "$reviews_fetch_failed" \
+  --argjson conversation_comments_fetch_failed "$conversation_comments_fetch_failed" \
   --slurpfile thread_data "$WORK_DIR/threads.json" \
+  --slurpfile changed_files "$WORK_DIR/changed-files.json" \
   --rawfile diff "$WORK_DIR/diff.txt" \
   --slurpfile checks "$WORK_DIR/checks.json" \
   --slurpfile reviews "$WORK_DIR/reviews.json" \

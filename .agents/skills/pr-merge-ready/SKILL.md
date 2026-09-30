@@ -90,7 +90,7 @@ If the branch is out of date: `git push --force-with-lease` only after verifying
 
 Exit only when every condition is true on the same poll, _after CI has dispatched for the current head SHA_:
 
-1. **No actionable review comments** — `unresolved_comments` is empty, or every remaining entry is Skip, `is_outdated: true`, or the issue no longer applies (`code_context`). For any thread in the skip ledger (an auto-resolving-bot thread left open under the exception): if the bot has closed it, count DONE; if the bounded fallback has **not** yet fired (≥2 pr-fix-plan polls AND ≥5 min), **do not count DONE and do not force-resolve** — wait for the bot. Only after that window, if the thread is still open, force-resolve, surface the deviation, then count DONE. Escalate threads awaiting a user decision **block DONE**. Unapplied Fix nits from `top_level_comments` (including advisory review bodies) also block DONE.
+1. **No actionable review comments** — `unresolved_comments` is empty, or every remaining entry is Skip, `is_outdated: true`, or the issue no longer applies (`code_context`). For any thread in the skip ledger (an auto-resolving-bot thread left open under the exception): if the bot has closed it, count DONE; if the bounded fallback has **not** yet fired (≥2 pr-fix-plan polls AND ≥5 min), **do not count DONE and do not force-resolve** — wait for the bot. Only after that window, if the thread is still open, force-resolve, surface the deviation, then count DONE. Escalate threads awaiting a user decision **block DONE**. Unapplied Fix nits from `top_level_comments` (including advisory review bodies) also block DONE. If `reviews_fetch_failed` or `conversation_comments_fetch_failed` is true, feedback is incomplete and DONE is blocked.
 2. **All required CI checks for the head SHA are present and concluded.**
 3. **No CI pending/running** — `checks_summary.pending == 0` and `checks_fetch_failed` is absent. If `checks_fetch_failed: true`, CI is unknown — do not count as done.
 4. **No `REVIEW_REQUESTED`** — `reviewRequests` is empty.
@@ -155,6 +155,7 @@ gh pr view "$PR_NUMBER" --json headRefOid,reviewDecision,reviewRequests,latestRe
 - `top_level_comments` — omitted when empty
 - `pattern_summary`
 - `checks` / `checks_summary` — if `checks_fetch_failed: true`, the empty list is NOT trustworthy
+- `reviews_fetch_failed` / `conversation_comments_fetch_failed` — if true, feedback is incomplete and DONE is blocked
 
 Skip `is_outdated: true` entries when counting actionable work. Also skip any whose `code_context` shows the issue is already addressed.
 
@@ -337,7 +338,7 @@ A naive `gh pr checks` right after push reports `pending=0` because GitHub has n
 
 Do not run `pr-fix-plan` every 15s (~2s/call). Poll a cheap GraphQL sentinel; full `pr-fix-plan` only when something changed.
 
-- **Sentinel** every 15–30s (~0.3s): unresolved count + `updatedAt` of the most recent review. Tune toward 15s in the first 2 min after push (bots are most active); 30s later.
+- **Sentinel** every 15–30s (~0.3s): unresolved count plus newest review-thread, review-body, and conversation-comment timestamps. Tune toward 15s in the first 2 min after push (bots are most active); 30s later.
 - **Full fetch** when the sentinel fires, or every ~2 min for CI status.
 
 This pins the session. That is the point: responsiveness.
@@ -367,6 +368,7 @@ gh api graphql -f query='
         reviews(last: 10, states: [COMMENTED, APPROVED, CHANGES_REQUESTED]) {
           edges { node { updatedAt } }
         }
+        comments(last: 1) { edges { node { updatedAt } } }
       }
     }
   }
@@ -376,19 +378,20 @@ gh api graphql -f query='
     thread_total: .reviewThreads.totalCount,
     unresolved: [.reviewThreads.edges[].node | select(.isResolved == false and .isOutdated == false)] | length,
     latest_thread_timestamp: ([.reviewThreads.edges[].node.comments.edges[].node.updatedAt] | sort | last),
-    latest_review_timestamp: ([.reviews.edges[].node.updatedAt] | sort | last)
+    latest_review_timestamp: ([.reviews.edges[].node.updatedAt] | sort | last),
+    latest_conversation_comment_timestamp: ([.comments.edges[].node.updatedAt] | sort | last)
   }
 '
 ```
 
-`thread_total` is the arrival detector (monotonic — resolved threads never leave). `unresolved` is the state detector. Compare **both** to the entry baseline. `unresolved` alone misses a swap (new thread filed in the same interval an old one closed). A **reply on an existing unresolved thread** changes neither count — detect it via `latest_thread_timestamp` (the query uses `comments(last: 1)` so that is the newest comment, not the first).
+`thread_total` is the arrival detector (monotonic — resolved threads never leave). `unresolved` is the state detector. Compare **both** to the entry baseline. `unresolved` alone misses a swap (new thread filed in the same interval an old one closed). A **reply on an existing unresolved thread** changes neither count — detect it via `latest_thread_timestamp`. The separate `latest_review_timestamp` and `latest_conversation_comment_timestamp` detect new top-level review bodies and conversation comments even when no thread is unresolved.
 
 #### Watcher loop
 
 ```
 captured_unresolved_count, captured_thread_total = one sentinel read at entry
 last_seen_sha = HEAD_SHA
-last_seen_thread_timestamp, last_seen_review_timestamp = that same read
+last_seen_thread_timestamp, last_seen_review_timestamp, last_seen_conversation_comment_timestamp = that same read
 
 loop:
   sleep 15–30s
@@ -407,8 +410,11 @@ loop:
   if sentinel.latest_thread_timestamp > last_seen_thread_timestamp:
     break → Step 1   # reply on an existing unresolved thread
 
-  if (sentinel.latest_review_timestamp > last_seen_review_timestamp) and sentinel.unresolved > 0:
-    break → Step 1   # activity on a previously-Skip thread, or overdue re-triage
+  if sentinel.latest_review_timestamp > last_seen_review_timestamp:
+    break → Step 1   # new or updated top-level review body
+
+  if sentinel.latest_conversation_comment_timestamp > last_seen_conversation_comment_timestamp:
+    break → Step 1   # new or updated conversation comment
 
   # Dispatch check ONCE after the first sentinel cycle, not every tick
   if not yet validated dispatch:
