@@ -297,8 +297,8 @@ type InsertTelemetryParams struct {
 	// ErrorClass is empty on a normal completion.
 	ErrorClass TurnErrorClass
 	// LatestToolCallCounts is pre-marshaled JSON {tool name: {calls, errors}}
-	// over only the tool results this request delivered. nil when it delivered
-	// none.
+	// over incoming Anthropic tool results. {} marks an observed empty result;
+	// nil means outcomes were not collected, including unsupported input formats.
 	LatestToolCallCounts []byte
 }
 

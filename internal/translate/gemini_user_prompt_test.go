@@ -11,8 +11,8 @@ import (
 
 func TestGeminiEndsWithUserPrompt(t *testing.T) {
 	for _, tc := range []struct {
-		name, contents string
-		prompt         bool
+		name, contents     string
+		endsWithUserPrompt bool
 	}{
 		{"typed prompt", `[{"role":"user","parts":[{"text":"please check"}]}]`, true},
 		{"tool result", `[{"role":"model","parts":[{"functionCall":{"name":"Bash","args":{}}}]},{"role":"user","parts":[{"functionResponse":{"name":"Bash","response":{"output":"ok"}}}]}]`, false},
@@ -22,7 +22,7 @@ func TestGeminiEndsWithUserPrompt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env, err := translate.ParseGemini([]byte(`{"model":"gemini-2.5-pro","contents":` + tc.contents + `}`))
 			require.NoError(t, err)
-			assert.Equal(t, tc.prompt, env.EndsWithUserPrompt())
+			assert.Equal(t, tc.endsWithUserPrompt, env.EndsWithUserPrompt())
 		})
 	}
 }
