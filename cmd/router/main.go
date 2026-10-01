@@ -26,6 +26,7 @@ import (
 	"weave-os/router/internal/config"
 	"weave-os/router/internal/dispatch"
 	"weave-os/router/internal/entra"
+	"weave-os/router/internal/escalationmodal"
 	"weave-os/router/internal/feedback"
 	"weave-os/router/internal/flags"
 	"weave-os/router/internal/observability"
@@ -1254,6 +1255,16 @@ func main() {
 		}
 		escalationJudge = judge
 	}
+	qwenEscalationURL := strings.TrimSpace(os.Getenv("ROUTER_LLM_ESCALATION_URL"))
+	qwenEscalationKey := strings.TrimSpace(os.Getenv("ROUTER_LLM_ESCALATION_API_KEY"))
+	var qwenEscalationJudge llmescalation.Judge
+	if qwenEscalationURL != "" || qwenEscalationKey != "" {
+		judge, judgeErr := escalationmodal.NewJudge(qwenEscalationURL, qwenEscalationKey, nil)
+		if judgeErr != nil {
+			panic(judgeErr)
+		}
+		qwenEscalationJudge = judge
+	}
 	servedModels := proxyRoutableModels(routingTargets, availableProviders, hmmRouter != nil)
 
 	proxySvc := proxy.NewService(routeEntry, providerMap, telemetryEmitter, embedOnlyUser, semanticCache, pinStore, hardPinExplore, hardPinProvider, hardPinModel, repo.Telemetry).
@@ -1262,6 +1273,7 @@ func main() {
 		WithEscalation(escalationStore, escalationObserver).
 		WithEscalationDashboard(escalationDashboardStore).
 		WithLLMEscalation(llmEscalationStore, escalationJudge).
+		WithQwenEscalation(qwenEscalationJudge).
 		WithEscalationConfiguration(llmEscalationStore, authSvc.InvalidateInstallation, escalationJudgeActiveEnabled).
 		WithTranslationCompatibilityMode(proxy.TranslationCompatibilityMode(translationCompatibilityMode)).
 		WithScopedSearchRequirement(scopedSearchRequirement, searchRequirementDecayTurns).

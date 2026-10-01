@@ -156,8 +156,8 @@ const RegistryVersion = 22
 // are already per-installation columns on model_router_installations, or are
 // consumed at construction time and have no per-request read site to override.
 var Registry = []Definition{
-	{Key: KeyEscalationActiveClassifier, Kind: KindString, Description: "Active escalation classifier: none, xgb, or switchyard_llm_v1. Absent preserves legacy XGB flags.", OrgOverridable: true},
-	{Key: KeyEscalationShadowClassifier, Kind: KindString, Description: "Independent shadow escalation classifier: none, xgb, or switchyard_llm_v1.", OrgOverridable: true},
+	{Key: KeyEscalationActiveClassifier, Kind: KindString, Description: "Active escalation classifier: none, xgb, switchyard_llm_v1, or llm_escalation. Absent preserves legacy XGB flags.", OrgOverridable: true},
+	{Key: KeyEscalationShadowClassifier, Kind: KindString, Description: "Independent shadow escalation classifier: none, xgb, switchyard_llm_v1, or llm_escalation.", OrgOverridable: true},
 	{Key: KeyEscalationCadence, Kind: KindInt, Description: "Completed turns between LLM checkpoints: 3, 4, or 5. Default 3.", OrgOverridable: true},
 	{Key: KeyEscalationEpoch, Kind: KindInt, Description: "Escalation configuration generation; changes invalidate pending judgments.", OrgOverridable: true},
 	{Key: KeyEscalationXGBoostEnabled, Kind: KindBool, Description: "Route to the maximum complexity class on an XGBoost escalation checkpoint. Off by default.", OrgOverridable: true},

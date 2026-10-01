@@ -1742,6 +1742,9 @@ func (s *Service) runTurnLoop(
 			res.PinTier = "escalation_xgb"
 			if llmTurn != nil && llmTurn.active {
 				res.PinTier = llmEscalationPinTier
+				if llmTurn.session.Config.EffectiveClassifier() == flags.EscalationClassifierLLM {
+					res.PinTier = qwenEscalationPinTier
+				}
 			}
 			return res, nil
 		}
