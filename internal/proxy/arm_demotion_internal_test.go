@@ -104,6 +104,61 @@ func newDemotionTestService(store sessionpin.Store, flagOn bool) *Service {
 
 const demotedArm = "claude-opus-4-7"
 
+func TestMaybeDemoteArmAfterUnrescuedStall(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		err        error
+		committed  bool
+		rescueRan  bool
+		hardPinned bool
+		forced     bool
+		cancelled  bool
+		flagOn     bool
+		wantStrike bool
+	}{
+		{name: "idle watchdog", err: providers.ErrUpstreamIdleTimeout, flagOn: true, wantStrike: true},
+		{name: "output stall watchdog", err: providers.ErrUpstreamOutputStall, flagOn: true, wantStrike: true},
+		{name: "upstream 502", err: &providers.UpstreamStatusError{Status: http.StatusBadGateway}, flagOn: true},
+		{name: "output already committed", err: providers.ErrUpstreamIdleTimeout, committed: true, flagOn: true},
+		{name: "rescue already ran", err: providers.ErrUpstreamIdleTimeout, rescueRan: true, flagOn: true},
+		{name: "hard pin", err: providers.ErrUpstreamIdleTimeout, hardPinned: true, flagOn: true},
+		{name: "user forced model", err: providers.ErrUpstreamIdleTimeout, forced: true, flagOn: true},
+		{name: "client cancelled", err: providers.ErrUpstreamIdleTimeout, cancelled: true, flagOn: true},
+		{name: "flag off", err: providers.ErrUpstreamIdleTimeout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &demotionStubPinStore{}
+			svc := NewService(nil, nil, nil, false, nil, store, false, providers.ProviderAnthropic, "claude-haiku-4-5", nil).
+				WithRescuedFailureArmDemotion(tc.flagOn)
+			ctx := context.Background()
+			if tc.cancelled {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			decision := router.Decision{Provider: providers.ProviderAnthropic, Model: demotedArm}
+			if tc.forced {
+				decision.Reason = translate.ReasonUserForceModel
+			}
+
+			demoted := svc.maybeDemoteArmAfterUnrescuedStall(ctx, tc.rescueRan, tc.committed, tc.hardPinned, tc.err,
+				decision, uuid.New(), nonZeroSessionKey(), sessionpin.DefaultRole, sessionpin.DefaultRole)
+
+			if tc.wantStrike {
+				assert.Equal(t, demotedArm, demoted)
+				require.Len(t, store.demotions, 2)
+				for _, strike := range store.demotions {
+					assert.Equal(t, demotedArm, strike.model)
+					assert.Equal(t, sessionpin.DemotionReasonUnrescuedStall, strike.reason)
+				}
+			} else {
+				assert.Empty(t, demoted)
+				assert.Empty(t, store.demotions)
+			}
+		})
+	}
+}
+
 // Classification of the committed-stream failure path: only an upstream-owned
 // end of an already-committed stream may strike the arm out for the session.
 func TestMaybeDemoteArmAfterCommittedStreamFailure_Classification(t *testing.T) {

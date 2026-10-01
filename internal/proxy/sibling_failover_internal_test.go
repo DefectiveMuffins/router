@@ -45,6 +45,27 @@ func siblingModels(decisions []router.Decision) []string {
 	return models
 }
 
+func TestRescueBasisForTurnKeepsHeldPrimaryIdentity(t *testing.T) {
+	primary := router.Decision{Provider: providers.ProviderOpenAIGateway, Model: "gpt-6-luna", Reason: "held_pin"}
+	fresh := &router.RoutingMetadata{
+		RescueModels:        []string{"claude-opus-5-5"},
+		SelectedArmID:       "fresh-arm",
+		SelectedRosterArmID: "fresh-arm:high",
+	}
+	turn := turnLoopResult{StickyHit: true, Fresh: router.Decision{Model: "claude-opus-5-5", Metadata: fresh}}
+
+	basis := rescueBasisForTurn(primary, turn)
+
+	assert.Equal(t, primary.Model, basis.Model)
+	assert.Equal(t, primary.Provider, basis.Provider)
+	assert.Equal(t, primary.Reason, basis.Reason)
+	assert.Nil(t, primary.Metadata, "the selected primary must retain its own dispatch identity")
+	assert.Same(t, fresh, basis.Metadata)
+	assert.Nil(t, rescueBasisForTurn(primary, turnLoopResult{Fresh: turn.Fresh}).Metadata)
+	turn.HardPinned = true
+	assert.Nil(t, rescueBasisForTurn(primary, turn).Metadata)
+}
+
 func TestSiblingFailoverDecision(t *testing.T) {
 	ctx := context.Background()
 
@@ -127,14 +148,16 @@ func TestSiblingFailoverDecision(t *testing.T) {
 	t.Run("drops the arm selection so binding resolution re-resolves", func(t *testing.T) {
 		s := siblingService(providers.ProviderAnthropic)
 		md := &router.RoutingMetadata{
-			CandidateModels:    []string{"claude-sonnet-5"},
-			SelectedArmID:      "arm-opus",
-			SelectedUpstreamID: "claude-opus-5-20260101",
-			BindingIndex:       2,
+			CandidateModels:     []string{"claude-sonnet-5"},
+			SelectedArmID:       "arm-opus",
+			SelectedRosterArmID: "arm-opus:high",
+			SelectedUpstreamID:  "claude-opus-5-20260101",
+			BindingIndex:        2,
 		}
 		got, ok := firstSibling(s, ctx, overloadedDecision(md), 1_000, 0, 0)
 		require.True(t, ok)
 		assert.Empty(t, got.Metadata.SelectedArmID)
+		assert.Empty(t, got.Metadata.SelectedRosterArmID)
 		assert.Empty(t, got.Metadata.SelectedUpstreamID)
 		assert.Zero(t, got.Metadata.BindingIndex)
 		assert.Equal(t, "arm-opus", md.SelectedArmID, "the source decision's metadata is not mutated")

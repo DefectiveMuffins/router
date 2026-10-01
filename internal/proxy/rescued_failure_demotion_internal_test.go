@@ -179,6 +179,40 @@ func TestProxyMessages_RescuedPrimaryDemotion(t *testing.T) {
 	}
 }
 
+func TestProxyMessages_UnrescuedIdleFailureDemotesPrimary(t *testing.T) {
+	for _, ingress := range []struct {
+		name   string
+		path   string
+		body   []byte
+		openAI bool
+	}{
+		{name: "anthropic_messages", path: "/v1/messages", body: anthropicMessagesBody()},
+		{name: "openai_chat", path: "/v1/chat/completions", body: openaiChatBody(), openAI: true},
+	} {
+		t.Run(ingress.name, func(t *testing.T) {
+			store := &demotionStubPinStore{}
+			primary := &failingClient{err: providers.ErrUpstreamIdleTimeout}
+			svc := newRescuedFailureTurnService(store, rescuableDecision("hmm:authoritative model="+rescuedPrimaryModel, false), primary, &servingClient{}, true)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, ingress.path, strings.NewReader(string(ingress.body)))
+			var err error
+			if ingress.openAI {
+				err = svc.ProxyOpenAIChatCompletion(rescuedFailureCtx(), ingress.body, rec, req)
+			} else {
+				err = svc.ProxyMessages(rescuedFailureCtx(), ingress.body, rec, req)
+			}
+
+			require.ErrorIs(t, err, providers.ErrUpstreamIdleTimeout)
+			assert.Positive(t, primary.calls)
+			require.Len(t, store.demotions, 2, "a precommit stall must protect the next automatic turn even without a rescue")
+			for _, demotion := range store.demotions {
+				assert.Equal(t, rescuedPrimaryModel, demotion.model)
+				assert.Equal(t, sessionpin.DemotionReasonUnrescuedStall, demotion.reason)
+			}
+		})
+	}
+}
+
 // Same contract on the OpenAI chat/completions surface.
 func TestProxyOpenAIChatCompletion_RescuedPrimaryDemotion(t *testing.T) {
 	for _, tc := range rescuedFailureTurnCases(t) {
