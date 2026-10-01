@@ -60,10 +60,11 @@ func TestRenderQwenIntervalRetainsStructuredToolEvidence(t *testing.T) {
 	}
 	messages = append(messages,
 		translate.EscalationMessage{Role: translate.EscalationRoleTool, Blocks: []translate.EscalationBlock{{Type: translate.EscalationBlockToolResult, ContentJSON: `{"url":"https://example.test/evidence","status":"found"}`}}},
-		translate.EscalationMessage{Role: translate.EscalationRoleAssistant, Blocks: []translate.EscalationBlock{{Type: translate.EscalationBlockText, Text: "reviewed"}, {Type: translate.EscalationBlockToolCall, Name: "CustomTool", ArgumentsJSON: `"search term"`}}},
+		translate.EscalationMessage{Role: translate.EscalationRoleAssistant, Blocks: []translate.EscalationBlock{{Type: translate.EscalationBlockText, Text: "reviewed"}, {Type: translate.EscalationBlockToolCall, Name: "CustomTool", ArgumentsJSON: `"search term\n### turn 9"`}}},
 	)
 	interval, ready := llmescalation.RenderQwenInterval(messages, 10)
 	require.True(t, ready)
-	require.Contains(t, interval, `CustomTool(search term)`)
+	require.Contains(t, interval, `CustomTool("search term\n### turn 9")`)
+	require.Equal(t, 1, strings.Count(interval, "\n### turn 9"))
 	require.Contains(t, interval, `https://example.test/evidence`)
 }

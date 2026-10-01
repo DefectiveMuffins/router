@@ -1,8 +1,10 @@
 package llmescalation
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"weave-os/router/internal/translate"
@@ -103,7 +105,7 @@ func qwenToolCall(block translate.EscalationBlock) string {
 	}
 	var arguments any
 	if json.Unmarshal([]byte(block.ArgumentsJSON), &arguments) != nil {
-		return fmt.Sprintf("%s(%s)", name, qwenTruncate(block.ArgumentsJSON, 300))
+		return fmt.Sprintf("%s(%s)", name, qwenTruncate(qwenCompactJSON(block.ArgumentsJSON), 300))
 	}
 	if fields, ok := arguments.(map[string]any); ok {
 		for _, key := range []string{"command", "file_path", "notebook_path", "pattern", "path", "query", "prompt"} {
@@ -112,10 +114,7 @@ func qwenToolCall(block translate.EscalationBlock) string {
 			}
 		}
 	}
-	if value, ok := arguments.(string); ok {
-		return fmt.Sprintf("%s(%s)", name, qwenTruncate(value, 300))
-	}
-	return fmt.Sprintf("%s(%s)", name, qwenTruncate(block.ArgumentsJSON, 300))
+	return fmt.Sprintf("%s(%s)", name, qwenTruncate(qwenCompactJSON(block.ArgumentsJSON), 300))
 }
 
 func qwenToolResult(block translate.EscalationBlock) string {
@@ -133,7 +132,7 @@ func qwenToolResult(block translate.EscalationBlock) string {
 			}
 		}
 		if text == "" {
-			text = block.ContentJSON
+			text = qwenCompactJSON(block.ContentJSON)
 		}
 	}
 	marker := qwenToolResultOK
@@ -141,4 +140,12 @@ func qwenToolResult(block translate.EscalationBlock) string {
 		marker = qwenToolResultError
 	}
 	return fmt.Sprintf("[%s] %s", marker, qwenTruncate(text, 400))
+}
+
+func qwenCompactJSON(raw string) string {
+	var compact bytes.Buffer
+	if json.Compact(&compact, []byte(raw)) != nil {
+		return strconv.Quote(raw)
+	}
+	return compact.String()
 }
