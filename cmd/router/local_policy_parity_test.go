@@ -129,11 +129,11 @@ func TestLocalPinnedManagedDecisionParity(t *testing.T) {
 	_, err = managed.Route(context.Background(), router.Request{})
 	require.ErrorIs(t, err, policyregistry.ErrNoActivePolicy)
 	candidate.Release.Classifier.PackageSHA256 = strings.Repeat("b", 64)
-	_, err = build(context.Background(), candidate)
+	_, err = buildRouters(context.Background(), candidate)
 	require.ErrorContains(t, err, "classifier package digest")
 	failClassifier.Store(true)
 	_, err = local.Route(context.Background(), router.Request{PromptText: "Synthetic failure"})
 	require.Error(t, err, "local HMM failure must not fall back to another strategy")
-	_, err = managed.Route(admitted, router.Request{PromptText: "Synthetic failure"})
+	_, err = managed.Route(servingContext, router.Request{PromptText: "Synthetic failure"})
 	require.Error(t, err)
 }
