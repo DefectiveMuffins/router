@@ -100,6 +100,7 @@ type Service struct {
 	escalationDashboardStore   escalationdashboard.Store
 	llmEscalationStore         llmescalation.Store
 	llmEscalationJudge         llmescalation.Judge
+	qwenEscalationJudge        llmescalation.Judge
 	llmEscalationSlots         chan struct{}
 	llmEscalationConfiguration llmescalation.ConfigurationStore
 	llmEscalationInvalidate    func(string)

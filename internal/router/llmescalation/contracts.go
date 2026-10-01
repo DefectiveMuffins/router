@@ -16,14 +16,23 @@ import (
 // ErrStale identifies state from an expired or superseded session lifetime.
 var ErrStale = errors.New("LLM escalation lifetime superseded")
 
+// ErrInvalidJudgment identifies a malformed classifier response.
+var ErrInvalidJudgment = errors.New("invalid LLM escalation judgment")
+
 const (
-	Version            = string(flags.EscalationClassifierSwitchyard)
-	SwitchyardRevision = "9c774d2ee6fcac818410419dab3578c3e7abee57"
-	DefaultCadence     = 3
-	MaxJudgeCalls      = 30
-	JudgeTimeout       = 20 * time.Second
-	JobLease           = 30 * time.Second
-	MaxWorkers         = 16
+	Version             = string(flags.EscalationClassifierSwitchyard)
+	SwitchyardRevision  = "9c774d2ee6fcac818410419dab3578c3e7abee57"
+	DefaultCadence      = 3
+	MaxJudgeCalls       = 30
+	JudgeTimeout        = 20 * time.Second
+	JobLease            = 30 * time.Second
+	MaxWorkers          = 16
+	QwenReleaseName     = "qwen-finetuned-escalation-classifier"
+	QwenModelSHA256     = "620f908e24268bf9f116d533cc1d42f825f2a38599374c3db63c5db210b783d6"
+	QwenPromptSHA256    = "6fc829a3bc36d3f5c2cd2705ee28ba3d4f61dc5380313adf2012bfab22a8f9a0"
+	QwenRendererVersion = "five_turn_v1"
+	QwenProvider        = "modal"
+	QwenSchemaVersion   = "escalation_classifier_v1"
 )
 
 // SystemPrompt and ResponseSchema are unmodified Apache-2.0 Switchyard assets.
@@ -45,10 +54,19 @@ const (
 
 // Config identifies the immutable experiment settings in a session scope.
 type Config struct {
-	Mode    Mode   `json:"mode"`
-	Epoch   int    `json:"epoch"`
-	Digest  string `json:"digest"`
-	Cadence int    `json:"cadence"`
+	Mode       Mode                       `json:"mode"`
+	Epoch      int                        `json:"epoch"`
+	Digest     string                     `json:"digest"`
+	Cadence    int                        `json:"cadence"`
+	Classifier flags.EscalationClassifier `json:"classifier,omitempty"`
+}
+
+// EffectiveClassifier maps retained pre-selector sessions to Switchyard.
+func (c Config) EffectiveClassifier() flags.EscalationClassifier {
+	if c.Classifier == "" {
+		return flags.EscalationClassifierSwitchyard
+	}
+	return c.Classifier
 }
 
 // JudgeRequest freezes the rendered transcript and operational attribution.
