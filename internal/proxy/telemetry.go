@@ -615,7 +615,7 @@ const DecisionReasonRoutingFailed = "routing_failed"
 // carried an honoured policy pin, so replay analysis sees requested=true,
 // honoured=false even though no upstream dispatch happened. Unauthorized pins
 // and other routing failures write no row.
-func (s *Service) recordPolicyPinRouteFailure(ctx context.Context, requestID string, requestStart time.Time, requestedModel string, turnType turntype.TurnType, routeErr error) {
+func (s *Service) recordPolicyPinRouteFailure(ctx context.Context, requestID string, requestStart time.Time, requestedModel string, turnType turntype.TurnType, userPrompt bool, routeErr error) {
 	if _, honoured := router.HonouredPolicyPin(ctx); !honoured {
 		return
 	}
@@ -634,6 +634,7 @@ func (s *Service) recordPolicyPinRouteFailure(ctx context.Context, requestID str
 		TurnType:       string(turnType),
 		DecisionReason: DecisionReasonPolicyPinUnservable,
 		ErrorClass:     TurnErrorRoutingRefused,
+		UserPrompt:     &userPrompt,
 		Strategy:       string(router.StrategyFromContext(ctx)),
 		RouterUserID:   auth.UserIDFrom(ctx),
 	}

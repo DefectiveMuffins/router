@@ -86,6 +86,7 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 		return fmt.Errorf("parse request: %w", parseErr)
 	}
 	inboundLastUser := env.LastUserMessage()
+	inboundUserPrompt := env.EndsWithUserPrompt()
 	var responseBuffer *responseCostBuffer
 	if !env.Stream() {
 		responseBuffer = newResponseCostBuffer(w)
@@ -192,7 +193,7 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 	routeMs := time.Since(routeStart).Milliseconds()
 	if err != nil {
 		log.Error("Routing failed for Gemini request", "err", err, "route_ms", routeMs, "requested_model", feats.Model, "total_input_tokens", feats.Tokens)
-		s.recordPolicyPinRouteFailure(ctx, requestID, requestStart, feats.Model, routeRes.TurnType, err)
+		s.recordPolicyPinRouteFailure(ctx, requestID, requestStart, feats.Model, routeRes.TurnType, inboundUserPrompt, err)
 		return err
 	}
 	ctx = requestcontext.WithCallerModelPassthrough(ctx, routeRes.CallerModelPassthrough)
@@ -470,10 +471,12 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 			PinAgeSec:              int64PtrIf(stickyHit && pinAgeSec > 0, pinAgeSec),
 			ToolResultBytes:        toolResultBytesPtr(inboundLastUser, tt),
 			ErrorClass:             errorClass,
+			UserPrompt:             &inboundUserPrompt,
 			CredentialKeyPrefix:    credentialKeyPrefix,
 			CredentialKeySuffix:    credentialKeySuffix,
 			CredentialSource:       credentialSource,
 		}
+		applyServedGroupTelemetry(ctx, &telemetryParams, routeRes, decision)
 		applyPlannerTelemetry(&telemetryParams, routeRes)
 		applyEffortTelemetry(&telemetryParams, effortServed)
 		applyAuthorityShadowTelemetry(&telemetryParams, routeRes)
