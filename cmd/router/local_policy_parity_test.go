@@ -83,17 +83,17 @@ func TestLocalPinnedManagedDecisionParity(t *testing.T) {
 	candidate.Release.Classifier.ClassOrder = classes
 	candidate.Release.Classifier.TaxonomySHA256 = policyregistry.TaxonomyDigest(classes)
 	candidate.Release.Policy.SHA256 = digest
-	build := hmmPolicySnapshotBuilder(map[string]struct{}{providers.ProviderOpenAI: {}, providers.ProviderAnthropic: {}}, []router.Strategy{router.StrategyHMMEmbedding}, policySidecarAuthNone, time.Second, 400*time.Millisecond)
-	localRouters, err := build(context.Background(), candidate)
+	buildRouters := hmmPolicySnapshotBuilder(map[string]struct{}{providers.ProviderOpenAI: {}, providers.ProviderAnthropic: {}}, []router.Strategy{router.StrategyHMMEmbedding}, policySidecarAuthNone, time.Second, 400*time.Millisecond)
+	localRouters, err := buildRouters(context.Background(), candidate)
 	require.NoError(t, err)
-	managedRouters, err := build(context.Background(), candidate)
+	managedRouters, err := buildRouters(context.Background(), candidate)
 	require.NoError(t, err)
 	localSnapshot := &policyregistry.Snapshot{Candidate: candidate, Routers: localRouters}
 	managedSnapshot := &policyregistry.Snapshot{Candidate: candidate, Routers: managedRouters}
 	local := policyregistry.NewLocalPinnedRouter(router.StrategyHMMEmbedding, localSnapshot)
 	managed := policyregistry.NewAdmittedRouter(router.StrategyHMMEmbedding, managedSnapshot)
-	admitted := policyregistry.WithServingSnapshot(context.Background(), managedSnapshot)
-	for _, harness := range []string{"claude-code", "codex"} {
+	servingContext := policyregistry.WithServingSnapshot(context.Background(), managedSnapshot)
+	for _, clientApp := range []string{"claude-code", "codex"} {
 		for _, scenario := range []struct {
 			name    string
 			request router.Request
@@ -105,13 +105,13 @@ func TestLocalPinnedManagedDecisionParity(t *testing.T) {
 			{"subscription", router.Request{SubscriptionStatePreferredModels: []string{alternativeModel}}, alternativeModel},
 			{"continued-session", router.Request{PolicyTurnContext: &router.PolicyTurnContext{SessionTurnCount: 3, PreviousServedModel: alternativeModel}}, primaryModel},
 		} {
-			t.Run(harness+"/"+scenario.name, func(t *testing.T) {
+			t.Run(clientApp+"/"+scenario.name, func(t *testing.T) {
 				req := scenario.request
-				req.ClientApp = harness
+				req.ClientApp = clientApp
 				req.PromptText = "Synthetic routing parity request"
 				localDecision, err := local.Route(context.Background(), req)
 				require.NoError(t, err)
-				managedDecision, err := managed.Route(admitted, req)
+				managedDecision, err := managed.Route(servingContext, req)
 				require.NoError(t, err)
 				require.Equal(t, scenario.want, localDecision.Model)
 				require.Equal(t, scenario.want, managedDecision.Model)

@@ -166,6 +166,7 @@ func main() {
 	localPolicyTarget := strings.TrimSpace(config.GetOr("ROUTER_LOCAL_POLICY_TARGET", ""))
 	if certificateFile := config.GetOr("ROUTER_LOCAL_INSPECTION_CA_FILE", ""); certificateFile != "" {
 		if err := configureLocalInspection(deploymentMode, localPolicyTarget, certificateFile); err != nil {
+			logger.Error("Local HTTP inspection CA setup failed; refusing to boot", "err", err)
 			panic(err)
 		}
 	}
@@ -1549,6 +1550,9 @@ func main() {
 		PolicyPinEnabled:    policyPinEnabled,
 		ServingAdmission:    servingAdmission,
 		SubscriberAllowance: subscriberAllowanceSvc,
+	}
+	if localPolicyTarget != "" {
+		serverFeatures.LocalPinnedStrategy = router.StrategyHMMEmbedding
 	}
 	if trafficCapture != nil {
 		serverFeatures.TrafficCapture = trafficCapture

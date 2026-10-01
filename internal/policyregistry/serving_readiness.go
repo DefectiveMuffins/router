@@ -77,8 +77,12 @@ func (AdmittedRosterSource) Roster(ctx context.Context) ([]string, error) {
 }
 
 // LocalPinnedRosterSource exposes only the immutable policy selected at local startup.
-type LocalPinnedRosterSource struct{ Snapshot *Snapshot }
+type LocalPinnedRosterSource struct {
+	// Snapshot is the immutable policy selected at local startup.
+	Snapshot *Snapshot
+}
 
+// ClusterRoster returns routing evidence from the pinned startup snapshot.
 func (s LocalPinnedRosterSource) ClusterRoster(context.Context) (policy.RosterSnapshot, error) {
 	if s.Snapshot == nil {
 		return policy.RosterSnapshot{}, ErrNoActivePolicy
@@ -86,6 +90,7 @@ func (s LocalPinnedRosterSource) ClusterRoster(context.Context) (policy.RosterSn
 	return snapshotRoster(s.Snapshot), nil
 }
 
+// Roster returns all arms in the pinned startup policy.
 func (s LocalPinnedRosterSource) Roster(context.Context) ([]string, error) {
 	if s.Snapshot == nil {
 		return nil, ErrNoActivePolicy

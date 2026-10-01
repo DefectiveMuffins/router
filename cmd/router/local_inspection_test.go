@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/x509"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,17 @@ func TestLocalInspectionTrustIsScopedAndVerifiesTLS(t *testing.T) {
 	transport, err := localInspectionTransport(server.DeploymentModeSelfHosted, "prod/stable", certificateFile)
 	require.NoError(t, err)
 	defer transport.CloseIdleConnections()
+	systemRoots, err := x509.SystemCertPool()
+	require.NoError(t, err)
+	require.NotNil(t, systemRoots)
+	transportRootSubjects := make(map[string]struct{})
+	for _, subject := range transport.TLSClientConfig.RootCAs.Subjects() {
+		transportRootSubjects[string(subject)] = struct{}{}
+	}
+	for _, subject := range systemRoots.Subjects() {
+		_, exists := transportRootSubjects[string(subject)]
+		require.True(t, exists, "local inspection trust must retain system root %q", subject)
+	}
 	response, err := (&http.Client{Transport: transport}).Get(upstream.URL)
 	require.NoError(t, err)
 	response.Body.Close()

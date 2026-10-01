@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v5"
+
 	"weave-os/router/internal/config"
 	"weave-os/router/internal/policyclient"
 	"weave-os/router/internal/policyregistry"
@@ -90,14 +92,14 @@ func buildLocalServingRuntime(ctx context.Context, availableProviders map[string
 	if err != nil {
 		return fail(fmt.Errorf("read pinned selection set: %w", err))
 	}
-	set, ok := manifest.(*policyregistry.SelectionSetV2)
-	if !ok || set.Target != identity.Target {
+	selectionSet, ok := manifest.(*policyregistry.SelectionSetV2)
+	if !ok || selectionSet.Target != identity.Target {
 		return fail(errors.New("local serving requires a v2 selection set for the requested target"))
 	}
-	selection := set.View(selectionRef).Default
+	selection := selectionSet.View(selectionRef).Default
 	if identity.ProfileKey != "" {
 		var exists bool
-		selection, exists = set.View(selectionRef).Profiles[identity.ProfileKey]
+		selection, exists = selectionSet.View(selectionRef).Profiles[identity.ProfileKey]
 		if !exists {
 			return fail(errors.New("requested profile is absent from pinned selection"))
 		}
@@ -111,11 +113,11 @@ func buildLocalServingRuntime(ctx context.Context, availableProviders map[string
 	}
 	timeout := parseEnvDurationMs("ROUTER_HMM_SIDECAR_TIMEOUT_MS", policyclient.DefaultTimeout)
 	attemptTimeout := parseEnvAttemptTimeoutMs("ROUTER_HMM_SIDECAR_ATTEMPT_TIMEOUT_MS", policyclient.DeriveAttemptTimeout(timeout))
-	build := hmmPolicySnapshotBuilder(availableProviders, []router.Strategy{router.StrategyHMM, router.StrategyHMMEmbedding}, policySidecarAuthNone, timeout, attemptTimeout)
+	buildRouters := hmmPolicySnapshotBuilder(availableProviders, []router.Strategy{router.StrategyHMM, router.StrategyHMMEmbedding}, policySidecarAuthNone, timeout, attemptTimeout)
 	cache, err := policyregistry.NewServingRuntimeCache(registry, func(ctx context.Context, candidate policyregistry.Candidate) (map[router.Strategy]router.Router, error) {
 		candidate.HeadSnapshot.Head.ClassifierRevisionURL = identity.ClassifierURL
 		candidate.ClassifierAudience = ""
-		return build(ctx, candidate)
+		return buildRouters(ctx, candidate)
 	})
 	if err != nil {
 		return fail(err)
@@ -135,20 +137,28 @@ const localServingRouteWarmupAttempts = 2
 // warmLocalHMMRoute exercises the classifier and selection path before /readyz
 // can admit traffic. Route makes a decision only; it does not call a provider.
 func warmLocalHMMRoute(ctx context.Context, hmmRouter router.Router) error {
-	var lastErr error
-	for attempt := 1; attempt <= localServingRouteWarmupAttempts; attempt++ {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("local HMM route warm-up stopped before attempt 1: %w", err)
+	}
+	attempts := 0
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("local HMM route warm-up stopped before attempt %d: %w", attempt, err)
+			return struct{}{}, err
 		}
+		attempts++
 		attemptCtx, cancel := context.WithTimeout(ctx, localServingRouteWarmupAttemptTimeout)
+		defer cancel()
 		_, err := hmmRouter.Route(attemptCtx, router.Request{
 			PromptText: "Synthetic local HMM router readiness warm-up.",
 		})
-		cancel()
-		if err == nil {
-			return nil
-		}
-		lastErr = err
+		return struct{}{}, err
+	},
+		backoff.WithBackOff(backoff.NewExponentialBackOff()),
+		backoff.WithMaxTries(localServingRouteWarmupAttempts),
+		backoff.WithMaxElapsedTime(0),
+	)
+	if err != nil {
+		return fmt.Errorf("local HMM route warm-up failed after %d attempts: %w", attempts, err)
 	}
-	return fmt.Errorf("local HMM route warm-up failed after %d attempts: %w", localServingRouteWarmupAttempts, lastErr)
+	return nil
 }

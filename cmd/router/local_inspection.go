@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 
@@ -20,10 +21,13 @@ func localInspectionTransport(mode server.DeploymentMode, target, certificateFil
 	if err != nil {
 		return nil, err
 	}
-	// The launcher supplies public roots plus its ephemeral inspector CA.
-	// A native SystemCertPool marker would bypass additional fallback roots
-	// in provider transports whose TLSClientConfig is nil on macOS.
-	roots := x509.NewCertPool()
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("load system root certificates: %w", err)
+	}
+	if roots == nil {
+		return nil, errors.New("system root certificates are unavailable")
+	}
 	if !roots.AppendCertsFromPEM(pem) {
 		return nil, errors.New("inspection CA file contains no certificates")
 	}
