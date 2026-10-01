@@ -44,7 +44,7 @@ func run() error {
 	}
 	defer tx.Rollback(ctx)
 	installation, user, experiment := uuid.New(), uuid.New(), uuid.New()
-	snapshotExperiment := uuid.New()
+	snapshotExperimentID := uuid.New()
 	if _, err = tx.Exec(ctx, `INSERT INTO router.model_router_installations(id,external_id,name) VALUES($1,'synthetic-reporting','synthetic-reporting')`, installation); err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func run() error {
 	var percentageSnapshot int64
 	if err = tx.QueryRow(ctx, `INSERT INTO router.experiment_settings_snapshots(installation_id,experiment_id,revision,mode,settings)
       SELECT installation_id,$3,1,'percentage',jsonb_build_object('source_experiment_id',$2::text,'algorithm_version',1,'seed',seed::text,'router_on_percentage',router_on_percentage)
-      FROM router.blind_router_experiment_configurations WHERE installation_id=$1 RETURNING id`, installation, experiment, snapshotExperiment).Scan(&percentageSnapshot); err != nil {
+      FROM router.blind_router_experiment_configurations WHERE installation_id=$1 RETURNING id`, installation, experiment, snapshotExperimentID).Scan(&percentageSnapshot); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE router.blind_router_experiment_configurations SET reporting_experiment_id=$2,reporting_revision=3,reporting_updated_at=updated_at,experiment_snapshot_id=$3 WHERE installation_id=$1`, installation, experiment, percentageSnapshot); err != nil {
@@ -90,7 +90,7 @@ func run() error {
 	}
 	var teamSnapshot int64
 	if err = tx.QueryRow(ctx, `INSERT INTO router.experiment_settings_snapshots(installation_id,experiment_id,revision,mode,settings)
-      VALUES($1,$4,2,'teams',jsonb_build_object('source_experiment_id',$2::text,'algorithm_version',1,'router_user_ids',jsonb_build_array($3::text))) RETURNING id`, installation, experiment, user.String(), snapshotExperiment).Scan(&teamSnapshot); err != nil {
+      VALUES($1,$4,2,'teams',jsonb_build_object('source_experiment_id',$2::text,'algorithm_version',1,'router_user_ids',jsonb_build_array($3::text))) RETURNING id`, installation, experiment, user.String(), snapshotExperimentID).Scan(&teamSnapshot); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO router.installation_routing_policies(installation_id,mode,revision,reporting_experiment_id,reporting_updated_at,experiment_snapshot_id) VALUES($1,'assigned',7,$2,now(),$3)`, installation, experiment, teamSnapshot); err != nil {
@@ -106,7 +106,7 @@ func run() error {
 	// Reporting metadata failure must never alter the serving policy.
 	var malformedSnapshot int64
 	if err = tx.QueryRow(ctx, `INSERT INTO router.experiment_settings_snapshots(installation_id,experiment_id,revision,mode,settings)
-      VALUES($1,$2,3,'teams',jsonb_build_object('source_experiment_id',$3::text,'algorithm_version',1,'router_user_ids',jsonb_build_array(42))) RETURNING id`, installation, snapshotExperiment, experiment).Scan(&malformedSnapshot); err != nil {
+      VALUES($1,$2,3,'teams',jsonb_build_object('source_experiment_id',$3::text,'algorithm_version',1,'router_user_ids',jsonb_build_array(42))) RETURNING id`, installation, snapshotExperimentID, experiment).Scan(&malformedSnapshot); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE router.installation_routing_policies SET experiment_snapshot_id=$2 WHERE installation_id=$1`, installation, malformedSnapshot); err != nil {

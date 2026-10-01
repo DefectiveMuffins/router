@@ -83,11 +83,11 @@ func TestTeamSnapshotRequiresConfirmedMatchingAssignment(t *testing.T) {
 func TestPercentageSnapshotRequiresAutomaticActiveIdentity(t *testing.T) {
 	for _, id := range []int64{0, 9} {
 		for _, active := range []bool{false, true} {
-			for _, source := range []BlindExperimentAssignmentSource{BlindExperimentAssignmentAutomatic, BlindExperimentAssignmentManual} {
+			for _, assignmentSource := range []BlindExperimentAssignmentSource{BlindExperimentAssignmentAutomatic, BlindExperimentAssignmentManual} {
 				for _, subject := range []string{"", "subject"} {
-					state := BlindExperimentState{Active: active, Arm: BlindExperimentArmRouterOn, CanonicalSubjectKey: subject, AssignmentSource: source, ExperimentSnapshotID: id}
+					state := BlindExperimentState{Active: active, Arm: BlindExperimentArmRouterOn, CanonicalSubjectKey: subject, AssignmentSource: assignmentSource, ExperimentSnapshotID: id}
 					assignment, ok := ReportingAssignmentFrom(context.WithValue(context.Background(), BlindExperimentContextKey{}, state))
-					require.Equal(t, id > 0 && active && subject != "" && source == BlindExperimentAssignmentAutomatic, ok)
+					require.Equal(t, id > 0 && active && subject != "" && assignmentSource == BlindExperimentAssignmentAutomatic, ok)
 					if ok {
 						assert.Equal(t, id, assignment.SnapshotID)
 					}
