@@ -11,11 +11,9 @@ import (
 const qwenIntervalWidth = 5
 const qwenMinimumStart = 5
 
-type qwenToolResultMarker string
-
 const (
-	qwenToolResultOK    qwenToolResultMarker = "ok"
-	qwenToolResultError qwenToolResultMarker = "ERR"
+	qwenToolResultOK    = "ok"
+	qwenToolResultError = "ERR"
 )
 
 type qwenTurn struct {
