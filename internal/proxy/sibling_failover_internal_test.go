@@ -62,7 +62,8 @@ func TestRescueBasisForTurnKeepsHeldPrimaryIdentity(t *testing.T) {
 	assert.Equal(t, primary.Reason, basis.Reason)
 	assert.Nil(t, primary.Metadata, "the selected primary must retain its own dispatch identity")
 	assert.NotSame(t, fresh, basis.Metadata)
-	assert.Equal(t, fresh.RescueModels, basis.Metadata.RescueModels, "building the rescue basis must not mutate fresh policy metadata")
+	assert.Equal(t, []string{"claude-opus-5-5"}, basis.Metadata.RescueModels, "the held pin must retain eligible rescue models")
+	assert.Equal(t, []string{"claude-opus-5-5"}, fresh.RescueModels, "fresh policy metadata must remain unchanged")
 	assert.Nil(t, rescueBasisForTurn(primary, turnLoopResult{Fresh: turn.Fresh}).Metadata)
 	turn.HardPinned = true
 	assert.Nil(t, rescueBasisForTurn(primary, turn).Metadata)

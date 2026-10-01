@@ -315,9 +315,6 @@ func armStrikeLogFields(committedDemoted, rescuedDemoted string, rescuedReason s
 func armStrikeLogFieldsWithPrimaryReason(primaryDemoted string, primaryReason sessionpin.DemotionReason, rescuedDemoted string, rescuedReason sessionpin.DemotionReason) []any {
 	model, reason := primaryDemoted, ""
 	if model != "" {
-		if primaryReason == "" {
-			primaryReason = sessionpin.DemotionReasonCommittedStreamFailure
-		}
 		reason = string(primaryReason)
 	}
 	if model == "" && rescuedDemoted != "" {

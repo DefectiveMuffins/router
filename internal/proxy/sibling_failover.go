@@ -17,7 +17,6 @@ const ReasonSiblingFailover = "sibling_failover"
 
 // rescueBasisForTurn gives a held automatic pin this request's scored rescue
 // shortlist without changing the primary decision's selected arm or binding.
-// Candidates below the held model's tier are removed while preserving policy order.
 func rescueBasisForTurn(decision router.Decision, turn turnLoopResult) router.Decision {
 	if decision.Metadata == nil && turn.StickyHit && !turn.HardPinned && turn.Fresh.Metadata != nil {
 		metadata := *turn.Fresh.Metadata
