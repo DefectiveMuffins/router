@@ -53,6 +53,8 @@ func TestLocalInspectionProviderTransportTrust(t *testing.T) {
 		require.NoError(t, configureLocalInspection(server.DeploymentModeSelfHosted, "prod/stable", certificateFile))
 		transport := httputil.NewTransport(time.Second, time.Second)
 		defer transport.CloseIdleConnections()
+		require.NotNil(t, transport.TLSClientConfig)
+		require.NotNil(t, transport.TLSClientConfig.RootCAs)
 		response, err := (&http.Client{Transport: transport}).Get(os.Getenv("ROUTER_TEST_INSPECTION_URL"))
 		require.NoError(t, err)
 		response.Body.Close()

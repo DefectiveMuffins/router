@@ -41,12 +41,7 @@ func configureLocalInspection(mode server.DeploymentMode, target, certificateFil
 	if err != nil {
 		return err
 	}
-	if err := os.Setenv("GODEBUG", os.Getenv("GODEBUG")+",x509usefallbackroots=1"); err != nil {
-		return err
-	}
-	// Provider adapters construct their own transports with nil root pools.
-	// SetFallbackRoots is process-local and is called only once, at boot.
-	x509.SetFallbackRoots(transport.TLSClientConfig.RootCAs)
+	// Provider adapters copy this TLS configuration into their dedicated transports.
 	http.DefaultTransport = transport
 	return nil
 }
