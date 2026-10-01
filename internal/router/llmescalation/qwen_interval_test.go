@@ -49,3 +49,21 @@ func TestRenderQwenIntervalKeepsToolOutcomeWithNextResponse(t *testing.T) {
 	require.True(t, ready)
 	require.Contains(t, interval, "### turn 9\nretry\n-> Bash(command=\"pytest -q\")\n<- [ERR] test failed")
 }
+
+func TestRenderQwenIntervalRetainsStructuredToolEvidence(t *testing.T) {
+	messages := make([]translate.EscalationMessage, 0, 20)
+	for turn := range 9 {
+		messages = append(messages,
+			translate.EscalationMessage{Role: translate.EscalationRoleUser, Blocks: []translate.EscalationBlock{{Type: translate.EscalationBlockText, Text: "continue"}}},
+			translate.EscalationMessage{Role: translate.EscalationRoleAssistant, Blocks: []translate.EscalationBlock{{Type: translate.EscalationBlockText, Text: fmt.Sprintf("step %d", turn)}}},
+		)
+	}
+	messages = append(messages,
+		translate.EscalationMessage{Role: translate.EscalationRoleTool, Blocks: []translate.EscalationBlock{{Type: translate.EscalationBlockToolResult, ContentJSON: `{"url":"https://example.test/evidence","status":"found"}`}}},
+		translate.EscalationMessage{Role: translate.EscalationRoleAssistant, Blocks: []translate.EscalationBlock{{Type: translate.EscalationBlockText, Text: "reviewed"}, {Type: translate.EscalationBlockToolCall, Name: "CustomTool", ArgumentsJSON: `"search term"`}}},
+	)
+	interval, ready := llmescalation.RenderQwenInterval(messages, 10)
+	require.True(t, ready)
+	require.Contains(t, interval, `CustomTool(search term)`)
+	require.Contains(t, interval, `https://example.test/evidence`)
+}
