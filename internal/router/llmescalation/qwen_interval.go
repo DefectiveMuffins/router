@@ -20,7 +20,9 @@ type qwenTurn struct {
 
 // RenderQwenInterval formats five completed API turns like the SFT materializer.
 // It waits for at least five earlier turns because training excluded windows 0..4.
-func RenderQwenInterval(messages []translate.EscalationMessage) (string, bool) {
+// A compacted history cannot be given fresh turn numbers without changing the
+// evidence semantics of the training set.
+func RenderQwenInterval(messages []translate.EscalationMessage, completedTurns int64) (string, bool) {
 	turns := make([]qwenTurn, 0)
 	var inboundText, inboundResults []string
 	for _, message := range messages {
@@ -56,7 +58,7 @@ func RenderQwenInterval(messages []translate.EscalationMessage) (string, bool) {
 			}
 		}
 	}
-	if len(turns) < qwenMinimumStart+qwenIntervalWidth {
+	if len(turns) < qwenMinimumStart+qwenIntervalWidth || int64(len(turns)) != completedTurns {
 		return "", false
 	}
 	start := len(turns) - qwenIntervalWidth

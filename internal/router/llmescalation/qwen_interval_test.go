@@ -18,7 +18,7 @@ func TestRenderQwenIntervalUsesLastFiveCompletedTurns(t *testing.T) {
 			translate.EscalationMessage{Role: translate.EscalationRoleAssistant, Blocks: []translate.EscalationBlock{{Type: translate.EscalationBlockText, Text: fmt.Sprintf("Completed %d", turn)}}},
 		)
 	}
-	interval, ready := llmescalation.RenderQwenInterval(messages)
+	interval, ready := llmescalation.RenderQwenInterval(messages, 10)
 	require.True(t, ready)
 	require.Contains(t, interval, "The visible interval contains turns 5..9.")
 	require.Contains(t, interval, "### turn 5\n[user] Request 5\nCompleted 5")
@@ -26,8 +26,10 @@ func TestRenderQwenIntervalUsesLastFiveCompletedTurns(t *testing.T) {
 	require.NotContains(t, interval, "Request 4")
 	require.Equal(t, 5, strings.Count(interval, "### turn "))
 
-	_, ready = llmescalation.RenderQwenInterval(messages[:18])
+	_, ready = llmescalation.RenderQwenInterval(messages[:18], 9)
 	require.False(t, ready)
+	_, ready = llmescalation.RenderQwenInterval(messages, 12)
+	require.False(t, ready, "a shortened history must not be renumbered as a later window")
 }
 
 func TestRenderQwenIntervalKeepsToolOutcomeWithNextResponse(t *testing.T) {
@@ -43,7 +45,7 @@ func TestRenderQwenIntervalKeepsToolOutcomeWithNextResponse(t *testing.T) {
 		translate.EscalationMessage{Role: translate.EscalationRoleUser, Blocks: []translate.EscalationBlock{{Type: translate.EscalationBlockToolResult, ContentJSON: `"test failed"`, IsError: &isError}}},
 		translate.EscalationMessage{Role: translate.EscalationRoleAssistant, Blocks: []translate.EscalationBlock{{Type: translate.EscalationBlockText, Text: "retry"}, {Type: translate.EscalationBlockToolCall, Name: "Bash", ArgumentsJSON: `{"command":"pytest -q"}`}}},
 	)
-	interval, ready := llmescalation.RenderQwenInterval(messages)
+	interval, ready := llmescalation.RenderQwenInterval(messages, 10)
 	require.True(t, ready)
 	require.Contains(t, interval, "### turn 9\nretry\n-> Bash(command=\"pytest -q\")\n<- [ERR] test failed")
 }
