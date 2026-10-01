@@ -968,3 +968,9 @@ func TestArmDemotionLogFields(t *testing.T) {
 		[]any{"arm_demoted", rescuerModel, "arm_demotion_reason", "committed_stream_failure", "rescued_arm_demoted", demotedArm},
 		armDemotionLogFields(rescuerModel, demotedArm))
 }
+
+func TestArmStrikeLogFieldsIncludeUnrescuedStallReason(t *testing.T) {
+	assert.Equal(t,
+		[]any{"arm_demoted", demotedArm, "arm_demotion_reason", "unrescued_stall", "rescued_arm_demoted", ""},
+		armStrikeLogFieldsWithPrimaryReason(demotedArm, sessionpin.DemotionReasonUnrescuedStall, "", ""))
+}

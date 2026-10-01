@@ -326,9 +326,7 @@ func StartIdleWatchdogCause(ctx context.Context, cancel context.CancelCauseFunc,
 	}()
 	return func() {
 			mu.Lock()
-			if !stopped {
-				lastProgress = time.Now()
-			}
+			lastProgress = time.Now()
 			mu.Unlock()
 		}, sync.OnceFunc(func() {
 			mu.Lock()

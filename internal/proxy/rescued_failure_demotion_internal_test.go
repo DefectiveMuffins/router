@@ -213,6 +213,38 @@ func TestProxyMessages_UnrescuedIdleFailureDemotesPrimary(t *testing.T) {
 	}
 }
 
+func TestProxyMessages_BaselineRetryKeepsStallDemotionOnPrimary(t *testing.T) {
+	const primaryModel = "gpt-6-astra"
+	store := &demotionStubPinStore{}
+	primary := &failingClient{err: providers.ErrUpstreamIdleTimeout}
+	baseline := &failingClient{err: providers.ErrUpstreamIdleTimeout}
+	svc := NewService(
+		staticRouter{decision: router.Decision{Provider: providers.ProviderOpenAI, Model: primaryModel, Reason: "test"}},
+		map[string]providers.Client{
+			providers.ProviderAnthropic: baseline,
+			providers.ProviderOpenAI:    primary,
+		},
+		nil, false, nil, store, false, providers.ProviderAnthropic, "claude-haiku-4-5", nil,
+	).WithDeploymentKeyedProviders(map[string]struct{}{
+		providers.ProviderAnthropic: {},
+		providers.ProviderOpenAI:    {},
+	}).WithRescuedFailureArmDemotion(true)
+
+	body := anthropicMessagesBody()
+	rec := httptest.NewRecorder()
+	err := svc.ProxyMessages(rescuedFailureCtx(), body, rec,
+		httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body))))
+
+	require.ErrorIs(t, err, providers.ErrUpstreamIdleTimeout)
+	assert.Positive(t, primary.calls)
+	assert.Positive(t, baseline.calls, "the baseline retry must run before validating its demotion target")
+	require.Len(t, store.demotions, 2)
+	for _, demotion := range store.demotions {
+		assert.Equal(t, primaryModel, demotion.model, "a baseline retry must not replace the model that stalled")
+		assert.Equal(t, sessionpin.DemotionReasonUnrescuedStall, demotion.reason)
+	}
+}
+
 // Same contract on the OpenAI chat/completions surface.
 func TestProxyOpenAIChatCompletion_RescuedPrimaryDemotion(t *testing.T) {
 	for _, tc := range rescuedFailureTurnCases(t) {

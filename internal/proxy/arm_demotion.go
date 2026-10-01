@@ -309,7 +309,17 @@ func armDemotionLogFields(committedDemoted, rescuedDemoted string) []any {
 // reason: rescued_failure for the session-lifetime strike, rate_limited for a
 // cooldown.
 func armStrikeLogFields(committedDemoted, rescuedDemoted string, rescuedReason sessionpin.DemotionReason) []any {
-	model, reason := committedDemoted, armDemotionReason(committedDemoted)
+	return armStrikeLogFieldsWithPrimaryReason(committedDemoted, sessionpin.DemotionReasonCommittedStreamFailure, rescuedDemoted, rescuedReason)
+}
+
+func armStrikeLogFieldsWithPrimaryReason(primaryDemoted string, primaryReason sessionpin.DemotionReason, rescuedDemoted string, rescuedReason sessionpin.DemotionReason) []any {
+	model, reason := primaryDemoted, ""
+	if model != "" {
+		if primaryReason == "" {
+			primaryReason = sessionpin.DemotionReasonCommittedStreamFailure
+		}
+		reason = string(primaryReason)
+	}
 	if model == "" && rescuedDemoted != "" {
 		if rescuedReason == "" {
 			rescuedReason = sessionpin.DemotionReasonRescuedFailure

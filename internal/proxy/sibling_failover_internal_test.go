@@ -7,6 +7,7 @@ import (
 	"weave-os/router/internal/auth"
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/router"
+	"weave-os/router/internal/router/catalog"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,10 +61,38 @@ func TestRescueBasisForTurnKeepsHeldPrimaryIdentity(t *testing.T) {
 	assert.Equal(t, primary.Provider, basis.Provider)
 	assert.Equal(t, primary.Reason, basis.Reason)
 	assert.Nil(t, primary.Metadata, "the selected primary must retain its own dispatch identity")
-	assert.Same(t, fresh, basis.Metadata)
+	assert.NotSame(t, fresh, basis.Metadata)
+	assert.Equal(t, fresh.RescueModels, basis.Metadata.RescueModels, "building the rescue basis must not mutate fresh policy metadata")
 	assert.Nil(t, rescueBasisForTurn(primary, turnLoopResult{Fresh: turn.Fresh}).Metadata)
 	turn.HardPinned = true
 	assert.Nil(t, rescueBasisForTurn(primary, turn).Metadata)
+}
+
+func TestRescueBasisForHeldPinPreservesTierAndPolicyOrder(t *testing.T) {
+	primary := router.Decision{Provider: providers.ProviderAnthropic, Model: "claude-opus-5", Reason: "held_pin"}
+	freshMetadata := &router.RoutingMetadata{
+		RosterFailover: true,
+		RescueModels:   []string{"claude-haiku-4-5", "claude-opus-5-5", "gpt-6-astra", "claude-sonnet-5"},
+		CandidateModels: []string{
+			"claude-haiku-4-5", "claude-opus-5-5", "gpt-6-astra", "claude-sonnet-5",
+		},
+		PairedModel: "claude-haiku-4-5",
+	}
+	turn := turnLoopResult{
+		StickyHit: true,
+		Fresh:     router.Decision{Model: "claude-sonnet-5", Metadata: freshMetadata},
+	}
+
+	basis := rescueBasisForTurn(primary, turn)
+	service := siblingService(providers.ProviderAnthropic, providers.ProviderOpenAI)
+	decisions := service.siblingFailoverDecisions(context.Background(), basis, 1_000, 0, 0)
+
+	require.Equal(t, []string{"claude-opus-5-5", "gpt-6-astra"}, siblingModels(decisions))
+	for _, decision := range decisions {
+		assert.GreaterOrEqual(t, catalog.TierFor(decision.Model), catalog.TierFor(primary.Model))
+	}
+	assert.Equal(t, "claude-haiku-4-5", freshMetadata.PairedModel, "fresh metadata remains unchanged")
+	assert.Equal(t, []string{"claude-haiku-4-5", "claude-opus-5-5", "gpt-6-astra", "claude-sonnet-5"}, freshMetadata.RescueModels)
 }
 
 func TestSiblingFailoverDecision(t *testing.T) {
