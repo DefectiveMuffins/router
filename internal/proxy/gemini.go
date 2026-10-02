@@ -519,7 +519,7 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 		}
 		if proxyErr != nil {
 			unrescuedStallDemoted := s.maybeDemoteArmAfterUnrescuedStall(ctx, false, committed(preludeBuf), routeRes.HardPinned, primaryFailureErr, primaryDecision, installationID, routeRes.SessionKey, stickyStateRole(routeRes), routeRes.PinRole)
-			if armDemoted == "" && unrescuedStallDemoted != "" {
+			if unrescuedStallDemoted != "" {
 				armDemoted = unrescuedStallDemoted
 				armDemotionReason = sessionpin.DemotionReasonUnrescuedStall
 			}
