@@ -26,6 +26,37 @@ func codexCtx(token, accountID string) context.Context {
 	})
 }
 
+func TestProxy_CodexLunaSubscriptionDispatch(t *testing.T) {
+	const model = "gpt-6-luna"
+	var receivedModel, receivedAccount, receivedAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/responses", r.URL.Path)
+		receivedAccount = r.Header.Get(requestcontext.ChatGPTAccountIDHeader)
+		receivedAuth = r.Header.Get("Authorization")
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		receivedModel = gjson.GetBytes(body, "model").String()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\"}\n\n")
+	}))
+	defer upstream.Close()
+
+	client := NewClient("deployment-key", "https://api.openai.example.invalid")
+	client.SetCodexBaseURL(upstream.URL)
+	prepared := providers.PreparedRequest{
+		Body:     []byte(`{"model":"` + model + `","input":"hi","stream":true}`),
+		Endpoint: providers.EndpointResponses,
+		Headers:  make(http.Header),
+	}
+	err := client.Proxy(codexCtx("synthetic-codex-jwt", "synthetic-account"), router.Decision{
+		Model: model, Provider: providers.ProviderOpenAI,
+	}, prepared, httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	require.NoError(t, err)
+	assert.Equal(t, model, receivedModel)
+	assert.Equal(t, "synthetic-account", receivedAccount)
+	assert.Equal(t, "Bearer synthetic-codex-jwt", receivedAuth)
+}
+
 // TestProxy_CodexSubscriptionDispatch verifies a Codex (ChatGPT) subscription
 // credential reroutes the upstream call to the Codex backend's /responses
 // endpoint with the required auth + account-id + beta + originator headers, and
