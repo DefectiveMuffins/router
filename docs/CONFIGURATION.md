@@ -396,6 +396,7 @@ Set `DATABASE_URL` directly, or compose it from the individual vars:
 | Variable                 | Default      | Purpose |
 | ------------------------ | ------------ | ------- |
 | `PORT`                   | `8080`       | HTTP listen port. |
+| `ROUTER_LISTEN_HOST`     | *(all interfaces)* | IP address to bind (for example `127.0.0.1` or a private LAN address). Set it when running the binary directly on a workstation; container deployments usually leave it unset and restrict exposure through port publishing. Overrides `ROUTER_HTTP_CAPTURE_LISTEN_HOST`. |
 | `ROUTER_DEPLOYMENT_MODE` | `selfhosted` | `selfhosted` mounts `/ui/*` and `/admin/v1/*`. `managed` skips both (for SaaS deployments with a separate admin UI). |
 | `ROUTER_ADMIN_PASSWORD`  | *(none)*     | Dashboard password. When unset, inference stays available but dashboard login and management endpoints return `admin_login_disabled`. |
 | `ROUTER_RESTRICT_UPSTREAM_EGRESS` | follows `ROUTER_DEPLOYMENT_MODE` | When true, provider adapters refuse to dial an upstream that resolves outside the public internet (loopback, private, link-local, CGNAT). Defaults to true in `managed` mode and false in `selfhosted`, where pointing a provider at an in-cluster or loopback gateway is normal. While on, provider adapters also ignore `HTTP_PROXY`/`HTTPS_PROXY`, since a proxied connection makes the destination unverifiable. |
