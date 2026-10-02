@@ -111,6 +111,7 @@ type Query struct {
 	CaptureMode          string
 	DebugEnabled         bool
 	Candidates           []Candidate
+	SubscriptionHeadroom []router.SubscriptionHeadroom
 	// ArtifactSHA256 selects a boot-loaded sidecar package; empty serves the
 	// sidecar's default package.
 	ArtifactSHA256 string

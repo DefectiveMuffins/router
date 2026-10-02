@@ -849,6 +849,7 @@ func (s *Service) runTurnLoop(
 	// Discounts covered models' cost term by the caller's observed subscription
 	// headroom. nil (feature off / no headroom yet) leaves scoring unchanged.
 	req.SubsidizedModelCostFactor = s.subsidyFactors(ctx, reqHeaders)
+	req.SubscriptionHeadroom = s.subscriptionHeadroom(ctx, reqHeaders)
 
 	// Explicit user force outranks every automatic fast path, including hard
 	// pins. Legacy thread-scoped forces keep their original thread boundary.

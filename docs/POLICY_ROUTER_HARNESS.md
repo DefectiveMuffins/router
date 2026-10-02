@@ -158,6 +158,30 @@ structured candidate list. Candidate bindings are authoritative.
 }
 ```
 
+Requests may also carry an optional `subscription_headroom` list: the last
+observed quota state of each subscription lane present on the request (the
+caller's own Claude or Codex plan, or a managed pool account). Unobserved
+lanes are omitted, and nothing in it identifies the credential:
+
+```json
+"subscription_headroom": [
+  {
+    "provider": "anthropic",
+    "windows": [
+      {"name": "primary", "used_fraction": 0.31, "window_minutes": 300, "reset_at": "2026-10-03T02:00:00Z"},
+      {"name": "secondary", "used_fraction": 0.62, "window_minutes": 10080}
+    ],
+    "overage_in_use": false,
+    "exhausted": false,
+    "observed_at": "2026-10-02T19:00:00Z"
+  }
+]
+```
+
+`marginal_cost_factor` on each candidate already folds this into one number;
+the raw windows let a policy weigh time-to-reset itself. `policy_router_v4`
+classifier requests never carry it.
+
 Return the offered `roster_id`. `selected_provider` may be omitted; if present,
 it must exactly match the candidate binding. The generic `policy_route_key`
 holds any policy-internal arm, bucket, cluster, or mode. During migration,
