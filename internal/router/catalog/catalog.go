@@ -10,6 +10,9 @@ import (
 	"weave-os/router/internal/providers"
 )
 
+// ModelGPT6Luna is the canonical GPT-6 Luna model ID.
+const ModelGPT6Luna = "gpt-6-luna"
+
 // Tier is the coarse capability bucket. Higher is stronger; integer
 // ordering is load-bearing (planner compares freshTier > pinTier).
 type Tier int
@@ -482,7 +485,7 @@ var Models = []Model{
 			LongContext: &LongContextPricing{ThresholdTokens: 272_000, InputUSDPer1M: 8.00, OutputUSDPer1M: 30.00, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.05},
 		}},
 	}},
-	{ID: "gpt-6-luna", Source: SourceClosedSource, Tier: TierMid, ContextWindow: 1_050_000, Providers: []ProviderBinding{
+	{ID: ModelGPT6Luna, Source: SourceClosedSource, Tier: TierMid, ContextWindow: 1_050_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderOpenAI, Price: Pricing{
 			InputUSDPer1M: 0.10, OutputUSDPer1M: 0.50, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.10,
 			LongContext: &LongContextPricing{ThresholdTokens: 272_000, InputUSDPer1M: 0.20, OutputUSDPer1M: 0.75, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.10},

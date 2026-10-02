@@ -12,6 +12,7 @@ import (
 
 	"weave-os/router/internal/auth"
 	"weave-os/router/internal/providers"
+	"weave-os/router/internal/router/catalog"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -245,14 +246,12 @@ func CodexSubscriptionCreds(token, accountID string) *Credentials {
 	}
 }
 
-const codexModelGPT6Luna = "gpt-6-luna"
-
 // codexCoveredModels is the fail-closed set of models the Codex CLI may serve
 // through the caller's ChatGPT OAuth credential. Deliberately a curated
 // allowlist, not "every OpenAI model": infrastructure-served OpenAI models
 // share ProviderOpenAI with the native Codex family, but must use BYOK or the
 // router deployment credential instead of chatgpt.com/backend-api/codex.
-var codexCoveredModels = []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6.1-sol", codexModelGPT6Luna}
+var codexCoveredModels = []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6.1-sol", catalog.ModelGPT6Luna}
 
 // CodexCoveredModels returns a copy of the models a Codex subscription may serve.
 func CodexCoveredModels() []string {
