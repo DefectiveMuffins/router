@@ -289,6 +289,25 @@ type routeRequest struct {
 	Candidates                []routeCandidate  `json:"candidates"`
 	CandidateModels           []string          `json:"candidate_models"`
 	CandidateProviders        map[string]string `json:"candidate_providers"`
+	SubscriptionHeadroom      []routeHeadroom   `json:"subscription_headroom,omitempty"`
+}
+
+// routeHeadroom is one subscription lane's observed quota state. Optional:
+// sidecars that ignore it keep their behavior, and it carries no credential
+// identity.
+type routeHeadroom struct {
+	Provider     string             `json:"provider"`
+	Windows      []routeQuotaWindow `json:"windows"`
+	OverageInUse bool               `json:"overage_in_use"`
+	Exhausted    bool               `json:"exhausted"`
+	ObservedAt   string             `json:"observed_at,omitempty"`
+}
+
+type routeQuotaWindow struct {
+	Name          string  `json:"name"`
+	UsedFraction  float64 `json:"used_fraction"`
+	WindowMinutes int     `json:"window_minutes,omitempty"`
+	ResetAt       string  `json:"reset_at,omitempty"`
 }
 
 type classifierRequestV4 struct {
@@ -847,11 +866,45 @@ func marshalRouteRequest(query policy.Query) ([]byte, error) {
 		Candidates:                candidates,
 		CandidateModels:           models,
 		CandidateProviders:        providerMap,
+		SubscriptionHeadroom:      routeHeadroomList(query.SubscriptionHeadroom),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal policy route request: %w", err)
 	}
 	return body, nil
+}
+
+func routeHeadroomList(lanes []router.SubscriptionHeadroom) []routeHeadroom {
+	if len(lanes) == 0 {
+		return nil
+	}
+	out := make([]routeHeadroom, 0, len(lanes))
+	for _, lane := range lanes {
+		windows := make([]routeQuotaWindow, 0, len(lane.Windows))
+		for _, w := range lane.Windows {
+			windows = append(windows, routeQuotaWindow{
+				Name:          w.Name,
+				UsedFraction:  w.UsedFraction,
+				WindowMinutes: w.WindowMinutes,
+				ResetAt:       rfc3339OrEmpty(w.ResetAt),
+			})
+		}
+		out = append(out, routeHeadroom{
+			Provider:     lane.Provider,
+			Windows:      windows,
+			OverageInUse: lane.OverageInUse,
+			Exhausted:    lane.Exhausted,
+			ObservedAt:   rfc3339OrEmpty(lane.ObservedAt),
+		})
+	}
+	return out
+}
+
+func rfc3339OrEmpty(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func routeCandidates(candidates []policy.Candidate, schemaVersion string) []routeCandidate {

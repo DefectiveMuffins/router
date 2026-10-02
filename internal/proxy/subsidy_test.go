@@ -201,3 +201,50 @@ func TestPresentSubscriptionTokens_MaxProductScopeReportsNone(t *testing.T) {
 	enrolled := context.WithValue(ctx, ManagedSubscriptionProvidersContextKey{}, map[auth.SubscriptionProvider]struct{}{auth.SubscriptionProviderClaude: {}})
 	assert.False(t, RequestPresentsCoveringSubscription(enrolled, http.Header{}, routePathMessages))
 }
+
+func TestSubscriptionHeadroom_ReportsObservedLanesWithoutIdentity(t *testing.T) {
+	now := time.Date(2026, 10, 2, 19, 0, 0, 0, time.UTC)
+	observer := usage.NewObserver([]byte("salt"), 10*time.Minute, func() time.Time { return now })
+	s := (&Service{}).WithSubscriptionAwareRouting(observer, 0.05, 2.0)
+	const claudeTok = "sk-ant-oat01-headroom"
+	reset := now.Add(3 * time.Hour)
+	observer.Record(observer.Key([]byte(claudeTok)), usage.Snapshot{
+		Primary:    usage.Window{UsedPercent: 0.31, WindowMinutes: 300, ResetAt: reset},
+		Secondary:  usage.Window{UsedPercent: 0.62, WindowMinutes: 10080},
+		ObservedAt: now,
+	})
+	headers := http.Header{"Authorization": []string{"Bearer " + claudeTok}}
+
+	lanes := s.subscriptionHeadroom(context.Background(), headers)
+	require.Len(t, lanes, 1)
+	lane := lanes[0]
+	assert.Equal(t, providers.ProviderAnthropic, lane.Provider)
+	assert.False(t, lane.Exhausted)
+	require.Len(t, lane.Windows, 2)
+	assert.Equal(t, "primary", lane.Windows[0].Name)
+	assert.InDelta(t, 0.31, lane.Windows[0].UsedFraction, 1e-9)
+	assert.Equal(t, reset, lane.Windows[0].ResetAt)
+	assert.Equal(t, "secondary", lane.Windows[1].Name)
+	assert.Equal(t, 10080, lane.Windows[1].WindowMinutes)
+}
+
+func TestSubscriptionHeadroom_OmitsUnobservedAndAbsentLanes(t *testing.T) {
+	s := (&Service{}).WithSubscriptionAwareRouting(
+		usage.NewObserver([]byte("salt"), time.Minute, time.Now), 0.05, 2.0)
+	assert.Nil(t, s.subscriptionHeadroom(context.Background(), http.Header{}), "no subscription present")
+
+	h := http.Header{}
+	h.Set("Authorization", "Bearer sk-ant-oat01-never-observed")
+	assert.Nil(t, s.subscriptionHeadroom(context.Background(), h),
+		"an unobserved lane is omitted, never reported as free")
+
+	assert.Nil(t, (&Service{}).subscriptionHeadroom(context.Background(), h), "no observer wired")
+}
+
+func TestSubscriptionHeadroom_FlagsExhaustedWindowUntilReset(t *testing.T) {
+	now := time.Date(2026, 10, 2, 19, 0, 0, 0, time.UTC)
+	snap := usage.Snapshot{Primary: usage.Window{UsedPercent: 1, WindowMinutes: 300, ResetAt: now.Add(time.Hour)}, ObservedAt: now}
+	assert.True(t, headroomFromSnapshot(providers.ProviderOpenAI, snap, now).Exhausted)
+	assert.False(t, headroomFromSnapshot(providers.ProviderOpenAI, snap, now.Add(2*time.Hour)).Exhausted,
+		"a spent window is no longer exhausted once its reset has passed")
+}

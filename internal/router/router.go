@@ -3,6 +3,7 @@ package router
 
 import (
 	"context"
+	"time"
 
 	"weave-os/router/internal/router/eligibility"
 	"weave-os/router/internal/router/escalation"
@@ -241,6 +242,12 @@ type Request struct {
 	// at full catalog so Haiku↔Opus spread is preserved); the planner instead
 	// treats it as a literal cost multiplier for dollar-EV cache-switch math.
 	SubsidizedModelCostFactor map[string]float64
+	// SubscriptionHeadroom is the observed quota state of each subscription
+	// lane this request can draw on (the caller's own plan or a managed pool
+	// account). It carries no credential identity. Policy sidecars use it to
+	// weigh scarcity themselves rather than only the folded cost factor above;
+	// nil when no subscription is present or nothing has been observed.
+	SubscriptionHeadroom []SubscriptionHeadroom
 	// ClusterArmOverrides is the per-API-key HMM cluster allowlist: cluster label
 	// → ordered catalog model IDs (index 0 = highest priority). Absent clusters
 	// keep the artifact default. Nil means no override.
@@ -490,6 +497,26 @@ type SidecarServingStats struct {
 	EmbedCacheEvictions *int64
 	RoutesInflight      *int64
 	OverrunsLive        *int64
+}
+
+// SubscriptionHeadroom is one subscription lane's last observed quota state.
+type SubscriptionHeadroom struct {
+	// Provider is the lane the subscription serves (providers.ProviderAnthropic
+	// for Claude, providers.ProviderOpenAI for Codex/ChatGPT).
+	Provider     string
+	Windows      []QuotaWindow
+	OverageInUse bool
+	Exhausted    bool
+	ObservedAt   time.Time
+}
+
+// QuotaWindow is one rate-limit window: "primary" (the short ~5h window) or
+// "secondary" (the weekly window).
+type QuotaWindow struct {
+	Name          string
+	UsedFraction  float64
+	WindowMinutes int
+	ResetAt       time.Time
 }
 
 type Router interface {

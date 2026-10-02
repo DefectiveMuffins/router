@@ -3,11 +3,13 @@ package proxy
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"weave-os/router/internal/observability"
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/proxy/usage"
 	"weave-os/router/internal/requestcontext"
+	"weave-os/router/internal/router"
 	"weave-os/router/internal/router/catalog"
 	"weave-os/router/internal/subscriptions"
 )
@@ -306,6 +308,57 @@ func (s *Service) subsidyFactors(ctx context.Context, headers http.Header) map[s
 		return nil
 	}
 	return factors
+}
+
+// subscriptionHeadroom reports the observed quota state of each subscription
+// lane present on this request, for policy sidecars that weigh scarcity
+// themselves. Unobserved lanes are omitted rather than guessed; nothing here
+// identifies the credential.
+func (s *Service) subscriptionHeadroom(ctx context.Context, headers http.Header) []router.SubscriptionHeadroom {
+	if s.usageObserver == nil {
+		return nil
+	}
+	codexTok, anthroTok := presentSubscriptionTokens(ctx, headers)
+	var out []router.SubscriptionHeadroom
+	for _, lane := range []struct{ provider, token string }{
+		{providers.ProviderAnthropic, anthroTok},
+		{providers.ProviderOpenAI, codexTok},
+	} {
+		if lane.token == "" {
+			continue
+		}
+		snap, observed := s.usageObserver.Snapshot(s.usageObserver.Key([]byte(lane.token)))
+		if !observed {
+			continue
+		}
+		out = append(out, headroomFromSnapshot(lane.provider, snap, s.clockNow()))
+	}
+	return out
+}
+
+func headroomFromSnapshot(provider string, snap usage.Snapshot, now time.Time) router.SubscriptionHeadroom {
+	var windows []router.QuotaWindow
+	for _, w := range []struct {
+		name   string
+		window usage.Window
+	}{{"primary", snap.Primary}, {"secondary", snap.Secondary}} {
+		if w.window.WindowMinutes == 0 && w.window.UsedPercent == 0 && w.window.ResetAt.IsZero() {
+			continue
+		}
+		windows = append(windows, router.QuotaWindow{
+			Name:          w.name,
+			UsedFraction:  w.window.UsedPercent,
+			WindowMinutes: w.window.WindowMinutes,
+			ResetAt:       w.window.ResetAt,
+		})
+	}
+	return router.SubscriptionHeadroom{
+		Provider:     provider,
+		Windows:      windows,
+		OverageInUse: snap.OverageInUse,
+		Exhausted:    snap.ExhaustedAsOf(now),
+		ObservedAt:   snap.ObservedAt,
+	}
 }
 
 // observedOrOptimisticFactor returns the cost factor for a present subscription:
