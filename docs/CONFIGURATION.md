@@ -124,6 +124,27 @@ tenant that can't issue a long-lived PAT configures each key with an RSA
 private key instead — see [Key-pair auth](#key-pair-auth) — or with no secret
 at all, see [Workload identity federation](#workload-identity-federation).
 
+**Self-hosted OpenAI-compatible server.** `local_openai` is for an inference
+server on the operator's own network (vLLM, SGLang, llama.cpp). Like
+`openai_gateway` it needs a base URL and serves only the models its key's
+`model_aliases` name, but it is additive: the installation's other upstreams,
+including Claude and Codex subscriptions, stay eligible. Its aliases may name
+any catalog model with a tier, not only the cluster scorer's deployed set, so a
+policy sidecar or `/force-model` can reach it. A forced model the key aliases is
+served by the local server ahead of the catalog's vendors.
+
+```bash
+curl -sS -b jar -X POST https://<router>/admin/v1/provider-keys \
+  -H 'content-type: application/json' \
+  -d '{"provider":"local_openai","key":"<server api key>",
+       "base_url":"http://192.0.2.10:8000/v1",
+       "model_aliases":{"z-ai/glm-5.3-flash":"<served model name>"}}'
+```
+
+The server receives only that key; subscription bearers and other provider
+credentials are never sent to it. `LOCAL_OPENAI_API_KEY` is reserved and
+unused: a local server without aliases has nothing to serve.
+
 **BYOK (per-installation keys).** Instead of (or in addition to) the env vars
 above, each installation can supply its own provider keys via the dashboard.
 Those are stored in Postgres and used only for that installation's traffic.
@@ -147,8 +168,8 @@ The value must be an absolute `http(s)` URL; anything else is rejected with
 `400`. A trailing slash is stripped, and the provider appends its own API path
 (`/v1/messages` for the Anthropic family, `/chat/completions` for the OpenAI
 one), so give the base only. Omit the field to keep the deployment endpoint —
-except for `anthropic_gateway` and `openai_gateway`, which have no default to
-fall back to and reject a key without one.
+except for `anthropic_gateway`, `openai_gateway` and `local_openai`, which have
+no default to fall back to and reject a key without one.
 
 A key may also carry a model alias map for endpoints that publish the catalog's
 models under their own names:

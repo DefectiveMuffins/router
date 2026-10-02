@@ -46,13 +46,14 @@ var expectedSessionAffinityMechanism = map[string]sessionAffinityMechanism{
 // off expectedSessionAffinityMechanism because the generic
 // x-session-affinity header default is correct for them.
 var defaultMechanismProviders = map[string]struct{}{
-	providers.ProviderFireworks: {},
-	providers.ProviderDeepInfra: {},
-	providers.ProviderMakora:    {},
-	providers.ProviderMiniMax:   {},
-	providers.ProviderTogether:  {},
-	providers.ProviderMeta:      {},
-	providers.ProviderWafer:     {},
+	providers.ProviderFireworks:   {},
+	providers.ProviderDeepInfra:   {},
+	providers.ProviderMakora:      {},
+	providers.ProviderMiniMax:     {},
+	providers.ProviderTogether:    {},
+	providers.ProviderMeta:        {},
+	providers.ProviderWafer:       {},
+	providers.ProviderLocalOpenAI: {},
 }
 
 // TestSessionAffinityCoversEveryOpenAICompatProvider guards against a new

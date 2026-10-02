@@ -485,6 +485,10 @@ func main() {
 		}
 	}
 
+	// Self-hosted OpenAI-compatible servers (vLLM on a LAN box) are BYOK-only:
+	// the key's base URL and model_aliases are the whole configuration.
+	providerMap[providers.ProviderLocalOpenAI] = openaiCompatProvider.NewGatewayClient("", "", openaiCompatProvider.WithModelListHTTPClient(discoveryHTTPClient))
+
 	{
 		// Native REST surface, required for multi-turn tool use against Gemini
 		// 3.x's opaque thought_signature field (not exposed via OpenAI-compat).

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
+	"weave-os/router/internal/providers"
 	"weave-os/router/internal/router/catalog"
 )
 
@@ -50,6 +52,12 @@ func (s *Service) forcedModelBinding(ctx context.Context, model, provider string
 		return gatewayForcedBinding(model, gateways, s.customBindingsForRequest(ctx))
 	}
 	excluded := s.policyExcludedProviders(ctx)
+	// The operator's own server aliasing the model says where it runs; its
+	// catalog vendors usually hold no key on such an installation.
+	if _, drop := excluded[providers.ProviderLocalOpenAI]; !drop &&
+		slices.Contains(s.customBindingsForRequest(ctx)[model], providers.ProviderLocalOpenAI) {
+		return providers.ProviderLocalOpenAI, ""
+	}
 	if len(excluded) == 0 {
 		return provider, ""
 	}
