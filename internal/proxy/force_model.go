@@ -369,7 +369,7 @@ func (s *Service) loadForceModelSessionPin(
 	ctx context.Context,
 	sessionKey [sessionpin.SessionKeyLen]byte,
 ) (sessionpin.Pin, bool, bool) {
-	if s.pinStore == nil || planOwnedServingRequest(ctx) {
+	if s.pinStore == nil {
 		return sessionpin.Pin{}, false, false
 	}
 	pin, found, err := s.pinStore.Get(ctx, sessionKey, forceModelSessionRole)
@@ -491,18 +491,16 @@ func (s *Service) clearForceModelSessionPin(
 // silently routing elsewhere would serve a model the caller never asked for.
 //
 // A `:level` suffix is stashed on the returned context (and on *r) as
-// router.Overrides.ForceEffort so pin + effort land in one header; callers
-// must continue with the returned context for routingKnobsForRequest to
-// see it.
+// router.Overrides.ForceEffort. The returned model spec also keeps the suffix
+// so plan-owned callers that omit routing knobs carry effort into same-turn
+// req.ForceModel; callers must continue with the returned context for
+// routingKnobsForRequest to see it.
 func (s *Service) applyForceModelHeader(
 	ctx context.Context,
 	r *http.Request,
 	installationID uuid.UUID,
 	forceModelSessionKey [sessionpin.SessionKeyLen]byte,
 ) (context.Context, string, error) {
-	if planOwnedServingRequest(ctx) {
-		return ctx, "", nil
-	}
 	raw := strings.TrimSpace(r.Header.Get(ForceModelHeader))
 	if raw == "" {
 		return ctx, "", nil
@@ -541,9 +539,16 @@ func (s *Service) applyForceModelHeader(
 		return ctx, "", &ForcedModelExcludedError{Model: canonicalModel, Reason: reason}
 	}
 	provider = binding
+	forcedModel := canonicalModel
+	if effortLevel != "" {
+		// The caller feeds this value into req.ForceModel for the same turn.
+		// Keep the effort suffix there because plan-owned routing deliberately
+		// omits routing knobs from the request passed to the scorer.
+		forcedModel += ":" + effortLevel
+	}
 	if err := s.setForceModelSessionPin(ctx, forceModelSessionKey, installationID, canonicalModel, provider, effortLevel); err != nil {
 		log.Error("x-weave-force-model: session pin upsert failed", "err", err)
-		return ctx, canonicalModel, nil
+		return ctx, forcedModel, nil
 	}
 	log.Info("x-weave-force-model applied",
 		"input_model", raw,
@@ -553,7 +558,7 @@ func (s *Service) applyForceModelHeader(
 		"force_model_session_key_hex", fmt.Sprintf("%x", forceModelSessionKey),
 		"role", forceModelSessionRole,
 	)
-	return ctx, canonicalModel, nil
+	return ctx, forcedModel, nil
 }
 
 // handleForceModelCommand processes a user-issued directive and writes a
@@ -597,13 +602,6 @@ func (s *Service) applyForceModelCommand(
 	// StripRoutingMarkerFromMessages strips it from later inbound requests;
 	// otherwise it'd persist in history and leak router internals upstream.
 	var msg string
-	if planOwnedServingRequest(ctx) && !cmd.Clear {
-		msg = "✦ **Weave Router** → this subscription uses automatic model selection\n\n"
-		if env.SourceFormat() == translate.FormatOpenAI {
-			msg = "Weave Router: this subscription uses automatic model selection."
-		}
-		return "", msg, nil
-	}
 	if cmd.Clear {
 		if err := s.clearLegacyForceModelPins(ctx, installationID, threadSessionKey); err != nil {
 			log.Error("/unforce-model: legacy pin cleanup failed", "err", err)
