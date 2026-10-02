@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -1522,10 +1521,15 @@ func main() {
 	server.RegisterWithFeatures(engine, authSvc, proxySvc, deployedModels, hmmRosterModels, deploymentMode, billingSvc, readinessChecker, hmmRosterSources, analyticsSvc, serverFeatures)
 
 	port := config.GetOr("PORT", "8080")
-	address := ":" + port
-	if trafficCapture != nil {
-		captureListenHost := config.GetOr("ROUTER_HTTP_CAPTURE_LISTEN_HOST", "127.0.0.1")
-		address = net.JoinHostPort(captureListenHost, port)
+	address, err := resolveListenAddress(
+		port,
+		config.GetOr("ROUTER_LISTEN_HOST", ""),
+		config.GetOr("ROUTER_HTTP_CAPTURE_LISTEN_HOST", "127.0.0.1"),
+		trafficCapture != nil,
+	)
+	if err != nil {
+		logger.Error("Invalid listen address", "err", err)
+		panic(err)
 	}
 	srv := &http.Server{
 		Addr:    address,
