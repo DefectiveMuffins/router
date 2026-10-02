@@ -47,6 +47,7 @@ var defaultRosterPrefixProviders = map[string]struct{}{
 	// An OpenAI-spec gateway serves several vendors' models, so no single
 	// vendor prefix is right; the bare ID lets the sidecar match what it can.
 	providers.ProviderOpenAIGateway: {},
+	providers.ProviderLocalOpenAI:   {},
 }
 
 // TestRosterIDForCoversEveryProvider guards against a new Provider* constant

@@ -629,3 +629,26 @@ func TestResolverKeepsVendorRoutingWhenNoGatewayConfigured(t *testing.T) {
 	require.Len(t, resolved.Candidates, 1)
 	assert.Equal(t, providers.ProviderAnthropic, resolved.Candidates[0].Provider)
 }
+
+func TestResolverAddsLocalServerAliasesAlongsideVendors(t *testing.T) {
+	resolver := policy.NewResolver(
+		set("claude-sonnet-5", "z-ai/glm-5.3-flash"),
+		set(providers.ProviderAnthropic, providers.ProviderDeepInfra, providers.ProviderLocalOpenAI),
+		catalogRosterID,
+		policy.ManagedProviderPolicy(),
+	)
+
+	resolved := resolver.Resolve(router.Request{
+		EnabledProviders: set(providers.ProviderAnthropic, providers.ProviderLocalOpenAI),
+		CustomBindings:   map[string][]string{"z-ai/glm-5.3-flash": {providers.ProviderLocalOpenAI}},
+	})
+
+	byModel := make(map[string]string, len(resolved.Candidates))
+	for _, candidate := range resolved.Candidates {
+		byModel[candidate.CatalogID] = candidate.Provider
+	}
+	assert.Equal(t, map[string]string{
+		"claude-sonnet-5":    providers.ProviderAnthropic,
+		"z-ai/glm-5.3-flash": providers.ProviderLocalOpenAI,
+	}, byModel)
+}

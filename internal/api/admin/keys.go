@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"weave-os/router/internal/auth"
 	"weave-os/router/internal/config"
 	"weave-os/router/internal/providers"
+	"weave-os/router/internal/router/catalog"
 
 	"github.com/gin-gonic/gin"
 )
@@ -283,7 +285,7 @@ func UpsertExternalKeyHandler(authSvc *auth.Service, models DeployedModelsSource
 			c.AbortWithStatusJSON(http.StatusConflict, gin.H{"error": "Provider already configured via deployment environment variable. Remove the env var before adding a dashboard key."})
 			return
 		}
-		allowed := deployedModelIDs(models)
+		allowed := aliasTargetIDs(req.Provider, models)
 		key, err := authSvc.UpsertExternalAPIKey(c.Request.Context(), installation.ID, auth.UpsertExternalAPIKeyParams{
 			Provider:      req.Provider,
 			RawKey:        req.Key,
@@ -347,7 +349,11 @@ func UpdateExternalKeyAliasesHandler(authSvc *auth.Service, models DeployedModel
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid request body."})
 			return
 		}
-		key, err := authSvc.SetExternalAPIKeyModelAliases(c.Request.Context(), installation.ID, id, req.ModelAliases, deployedModelIDs(models))
+		allowed := deployedModelIDs(models)
+		if isLocalKey(c.Request.Context(), authSvc, installation.ID, id) {
+			allowed = aliasTargetIDs(providers.ProviderLocalOpenAI, models)
+		}
+		key, err := authSvc.SetExternalAPIKeyModelAliases(c.Request.Context(), installation.ID, id, req.ModelAliases, allowed)
 		if err != nil {
 			if errors.Is(err, auth.ErrUnknownModel) || errors.Is(err, auth.ErrInvalidModelAlias) {
 				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -362,6 +368,38 @@ func UpdateExternalKeyAliasesHandler(authSvc *auth.Service, models DeployedModel
 		}
 		c.JSON(http.StatusOK, toExternalKeyResponse(key))
 	}
+}
+
+// aliasTargetIDs is the alias-validation set for a provider. A local server is
+// reached only through its aliases and never by the cluster scorer, so it may
+// name any routable catalog model rather than only the scorer's deployed set.
+func aliasTargetIDs(provider string, models DeployedModelsSource) map[string]struct{} {
+	if provider != providers.ProviderLocalOpenAI {
+		return deployedModelIDs(models)
+	}
+	allowed := deployedModelIDs(models)
+	if allowed == nil {
+		return nil
+	}
+	for _, model := range catalog.Models {
+		if model.Tier != catalog.TierUnknown {
+			allowed[model.ID] = struct{}{}
+		}
+	}
+	return allowed
+}
+
+func isLocalKey(ctx context.Context, authSvc *auth.Service, installationID, id string) bool {
+	keys, err := authSvc.ListExternalAPIKeys(ctx, installationID)
+	if err != nil {
+		return false
+	}
+	for _, key := range keys {
+		if key.ID == id {
+			return key.Provider == providers.ProviderLocalOpenAI
+		}
+	}
+	return false
 }
 
 // deployedModelIDs is the alias-validation set; nil source means skip validation.
