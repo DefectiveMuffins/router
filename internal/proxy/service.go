@@ -3419,6 +3419,20 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 		modelVariant1M = hadVariant
 	}
 
+	switch translate.MessageThreadType(body) {
+	case translate.MessageThreadContinue:
+		log.Info("Rejecting message-thread continue; client resends full history")
+		return writeMessageThreadUnsupported(w)
+	case translate.MessageThreadCreate:
+		stateless, threadErr := translate.StripMessageThread(body)
+		if threadErr != nil {
+			log.Error("Failed to strip message-thread create", "err", threadErr)
+			return fmt.Errorf("strip message thread: %w", threadErr)
+		}
+		body = stateless
+		translate.StripMessageThreadsBeta(r.Header)
+	}
+
 	env, parseErr := translate.ParseAnthropic(body)
 	if parseErr != nil {
 		log.Error("Failed to parse Anthropic request", "err", parseErr)
