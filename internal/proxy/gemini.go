@@ -504,18 +504,29 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 	// Two-strike provider disable: see ProxyMessages. Gemini rarely produces a
 	// real 529, but covers a future translate-layer path that might synthesize one.
 	armDemoted := ""
+	var armDemotionReason sessionpin.DemotionReason
 	primaryFailureDemoted := ""
 	var primaryFailureDemotionReason sessionpin.DemotionReason
 	if !routeRes.CallerModelPassthrough {
 		s.maybeDisableProviderAfterOverload(ctx, stickyHit, proxyErr, finalProvider, decision.Reason, installationID, routeRes.SessionKey, stickyStateRole(routeRes), routeRes.PinRole)
 		// See ProxyMessages for the committed-stream demotion rationale.
 		armDemoted = s.maybeDemoteArmAfterCommittedStreamFailure(ctx, committed(preludeBuf), routeRes.HardPinned, proxyErr, decision.Model, decision.Reason, installationID, routeRes.SessionKey, stickyStateRole(routeRes), routeRes.PinRole)
+		if armDemoted != "" {
+			armDemotionReason = sessionpin.DemotionReasonCommittedStreamFailure
+		}
 		if providers.IsResponseHeaderTimeout(primaryFailureErr) && (proxyErr != nil || decision.Model != primaryDecision.Model) {
 			primaryFailureDemoted, primaryFailureDemotionReason = s.maybeStrikeArmAfterRescuedFailure(ctx, false, routeRes.HardPinned, primaryFailureErr, primaryDecision, installationID, routeRes.SessionKey, stickyStateRole(routeRes), routeRes.PinRole)
 		}
+		if proxyErr != nil {
+			unrescuedStallDemoted := s.maybeDemoteArmAfterUnrescuedStall(ctx, false, committed(preludeBuf), routeRes.HardPinned, primaryFailureErr, primaryDecision, installationID, routeRes.SessionKey, stickyStateRole(routeRes), routeRes.PinRole)
+			if unrescuedStallDemoted != "" {
+				armDemoted = unrescuedStallDemoted
+				armDemotionReason = sessionpin.DemotionReasonUnrescuedStall
+			}
+		}
 	}
 
-	demotionLogFields := armStrikeLogFields(armDemoted, primaryFailureDemoted, primaryFailureDemotionReason)
+	demotionLogFields := armStrikeLogFieldsWithPrimaryReason(armDemoted, armDemotionReason, primaryFailureDemoted, primaryFailureDemotionReason)
 	log.Info("ProxyGeminiGenerateContent complete", append(append([]any{"requested_model", feats.Model, "baseline_model", s.baselineFor(feats.Model), "decision_model", decision.Model, "decision_provider", decision.Provider, "decision_reason", decision.Reason, "embedded_tokens", len(promptText) / 4, "total_input_tokens", feats.Tokens, "has_tools", feats.HasTools, "embed_input", embedInput, "sticky_hit", stickyHit, "pin_tier", pinTier, "turn_type", string(tt), "route_ms", routeMs, "proxy_ms", proxyMs, "proxy_err", proxyErr, "upstream_status", upstreamStatus(proxyErr)}, demotionLogFields...), append(plannerLogFields(routeRes), rateLimit.completionLogFields()...)...)...)
 	s.reportPolicyOutcome(ctx, routeRes, decision, effortServed, decision.Provider, false, feats.Tokens, in, out, cacheCreation, cacheRead, routeMs, proxyMs, proxyErr, nil)
 	return proxyErr

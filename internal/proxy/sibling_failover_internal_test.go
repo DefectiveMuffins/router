@@ -7,6 +7,7 @@ import (
 	"weave-os/router/internal/auth"
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/router"
+	"weave-os/router/internal/router/catalog"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,56 @@ func siblingModels(decisions []router.Decision) []string {
 		models = append(models, d.Model)
 	}
 	return models
+}
+
+func TestRescueBasisForTurnKeepsHeldPrimaryIdentity(t *testing.T) {
+	primary := router.Decision{Provider: providers.ProviderOpenAIGateway, Model: "gpt-6-luna", Reason: "held_pin"}
+	fresh := &router.RoutingMetadata{
+		RescueModels:        []string{"claude-opus-5-5"},
+		SelectedArmID:       "fresh-arm",
+		SelectedRosterArmID: "fresh-arm:high",
+	}
+	turn := turnLoopResult{StickyHit: true, Fresh: router.Decision{Model: "claude-opus-5-5", Metadata: fresh}}
+
+	basis := rescueBasisForTurn(primary, turn)
+
+	assert.Equal(t, primary.Model, basis.Model)
+	assert.Equal(t, primary.Provider, basis.Provider)
+	assert.Equal(t, primary.Reason, basis.Reason)
+	assert.Nil(t, primary.Metadata, "the selected primary must retain its own dispatch identity")
+	assert.NotSame(t, fresh, basis.Metadata)
+	assert.Equal(t, []string{"claude-opus-5-5"}, basis.Metadata.RescueModels, "the held pin must retain eligible rescue models")
+	assert.Equal(t, []string{"claude-opus-5-5"}, fresh.RescueModels, "fresh policy metadata must remain unchanged")
+	assert.Nil(t, rescueBasisForTurn(primary, turnLoopResult{Fresh: turn.Fresh}).Metadata)
+	turn.HardPinned = true
+	assert.Nil(t, rescueBasisForTurn(primary, turn).Metadata)
+}
+
+func TestRescueBasisForHeldPinPreservesTierAndPolicyOrder(t *testing.T) {
+	primary := router.Decision{Provider: providers.ProviderAnthropic, Model: "claude-opus-5", Reason: "held_pin"}
+	freshMetadata := &router.RoutingMetadata{
+		RosterFailover: true,
+		RescueModels:   []string{"claude-haiku-4-5", "claude-opus-5-5", "gpt-6-astra", "claude-sonnet-5"},
+		CandidateModels: []string{
+			"claude-haiku-4-5", "claude-opus-5-5", "gpt-6-astra", "claude-sonnet-5",
+		},
+		PairedModel: "claude-haiku-4-5",
+	}
+	turn := turnLoopResult{
+		StickyHit: true,
+		Fresh:     router.Decision{Model: "claude-sonnet-5", Metadata: freshMetadata},
+	}
+
+	basis := rescueBasisForTurn(primary, turn)
+	service := siblingService(providers.ProviderAnthropic, providers.ProviderOpenAI)
+	decisions := service.siblingFailoverDecisions(context.Background(), basis, 1_000, 0, 0)
+
+	require.Equal(t, []string{"claude-opus-5-5", "gpt-6-astra"}, siblingModels(decisions))
+	for _, decision := range decisions {
+		assert.GreaterOrEqual(t, catalog.TierFor(decision.Model), catalog.TierFor(primary.Model))
+	}
+	assert.Equal(t, "claude-haiku-4-5", freshMetadata.PairedModel, "fresh metadata remains unchanged")
+	assert.Equal(t, []string{"claude-haiku-4-5", "claude-opus-5-5", "gpt-6-astra", "claude-sonnet-5"}, freshMetadata.RescueModels)
 }
 
 func TestSiblingFailoverDecision(t *testing.T) {
@@ -127,14 +178,16 @@ func TestSiblingFailoverDecision(t *testing.T) {
 	t.Run("drops the arm selection so binding resolution re-resolves", func(t *testing.T) {
 		s := siblingService(providers.ProviderAnthropic)
 		md := &router.RoutingMetadata{
-			CandidateModels:    []string{"claude-sonnet-5"},
-			SelectedArmID:      "arm-opus",
-			SelectedUpstreamID: "claude-opus-5-20260101",
-			BindingIndex:       2,
+			CandidateModels:     []string{"claude-sonnet-5"},
+			SelectedArmID:       "arm-opus",
+			SelectedRosterArmID: "arm-opus:high",
+			SelectedUpstreamID:  "claude-opus-5-20260101",
+			BindingIndex:        2,
 		}
 		got, ok := firstSibling(s, ctx, overloadedDecision(md), 1_000, 0, 0)
 		require.True(t, ok)
 		assert.Empty(t, got.Metadata.SelectedArmID)
+		assert.Empty(t, got.Metadata.SelectedRosterArmID)
 		assert.Empty(t, got.Metadata.SelectedUpstreamID)
 		assert.Zero(t, got.Metadata.BindingIndex)
 		assert.Equal(t, "arm-opus", md.SelectedArmID, "the source decision's metadata is not mutated")

@@ -140,6 +140,28 @@ func (s *Service) maybeStrikeArmAfterRescuedFailure(
 	return primary.Model, reason
 }
 
+// maybeDemoteArmAfterUnrescuedStall protects the next automatic turn when a
+// watchdog ended this one before output and no sibling rescue ran.
+func (s *Service) maybeDemoteArmAfterUnrescuedStall(
+	ctx context.Context,
+	rescueRan, committed, hardPinned bool,
+	stallErr error,
+	failed router.Decision,
+	installationID uuid.UUID,
+	sessionKey [sessionpin.SessionKeyLen]byte,
+	role, pinRole string,
+) string {
+	if !s.ResolveRescuedFailureArmDemotion(ctx) || s.pinStore == nil || installationID == uuid.Nil ||
+		sessionKey == ([sessionpin.SessionKeyLen]byte{}) || failed.Model == "" || hardPinned || rescueRan || committed || ctx.Err() != nil ||
+		strings.HasPrefix(failed.Reason, translate.ReasonUserForceModel) || !isUpstreamWatchdogError(stallErr) {
+		return ""
+	}
+	if !s.demoteArmForSession(ctx, failed.Model, sessionpin.DemotionReasonUnrescuedStall, time.Time{}, upstreamStatus(stallErr), installationID, sessionKey, role, pinRole) {
+		return ""
+	}
+	return failed.Model
+}
+
 // demoteArmForSession writes one strike against model on every pin row the
 // session's next turn merges. Reports whether the strike landed. A non-zero
 // cooldownUntil records a time-limited strike instead of a session-lifetime
@@ -287,7 +309,14 @@ func armDemotionLogFields(committedDemoted, rescuedDemoted string) []any {
 // reason: rescued_failure for the session-lifetime strike, rate_limited for a
 // cooldown.
 func armStrikeLogFields(committedDemoted, rescuedDemoted string, rescuedReason sessionpin.DemotionReason) []any {
-	model, reason := committedDemoted, armDemotionReason(committedDemoted)
+	return armStrikeLogFieldsWithPrimaryReason(committedDemoted, sessionpin.DemotionReasonCommittedStreamFailure, rescuedDemoted, rescuedReason)
+}
+
+func armStrikeLogFieldsWithPrimaryReason(primaryDemoted string, primaryReason sessionpin.DemotionReason, rescuedDemoted string, rescuedReason sessionpin.DemotionReason) []any {
+	model, reason := primaryDemoted, ""
+	if model != "" {
+		reason = string(primaryReason)
+	}
 	if model == "" && rescuedDemoted != "" {
 		if rescuedReason == "" {
 			rescuedReason = sessionpin.DemotionReasonRescuedFailure

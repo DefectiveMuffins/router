@@ -191,6 +191,27 @@ func TestProxyGeminiGenerateContent_DemotesUnrescuedResponseHeaderTimeout(t *tes
 	}
 }
 
+func TestProxyGeminiGenerateContent_DemotesUnrescuedWatchdogStall(t *testing.T) {
+	store := newFakePinStore()
+	googleProvider := &fakeProvider{proxyErr: providers.ErrUpstreamOutputStall}
+	svc := proxy.NewService(
+		&fakeRouter{decision: router.Decision{Provider: providers.ProviderGoogle, Model: "gemini-1.5-pro", Reason: "cluster"}},
+		map[string]providers.Client{providers.ProviderGoogle: googleProvider},
+		nil, false, nil, store, false, providers.ProviderGoogle, "gemini-2.5-flash", nil,
+	).WithRetrySleep(noRetrySleep).WithRescuedFailureArmDemotion(true)
+	recorder := httptest.NewRecorder()
+	body := strings.Replace(geminiInjectedBody, `"stream":false`, `"stream":true`, 1)
+	err := svc.ProxyGeminiGenerateContent(authedCtx("00000000-0000-0000-0000-000000000001"), []byte(body), recorder,
+		httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-1.5-pro:streamGenerateContent", nil))
+
+	require.ErrorIs(t, err, providers.ErrUpstreamOutputStall)
+	require.Len(t, store.demotions, 2)
+	for _, demotion := range store.demotions {
+		assert.Equal(t, "gemini-1.5-pro", demotion.Model)
+		assert.Equal(t, sessionpin.DemotionReasonUnrescuedStall, demotion.Reason)
+	}
+}
+
 // Under transient_rate_limit the Gemini path paces same-binding retries like
 // Messages does: a Retry-After above the cap ends them after the first attempt.
 func TestProxyGeminiGenerateContent_TransientRateLimitHonoursRetryAfterCap(t *testing.T) {

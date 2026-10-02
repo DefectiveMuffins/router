@@ -15,6 +15,32 @@ import (
 // the routed model's own bindings were exhausted.
 const ReasonSiblingFailover = "sibling_failover"
 
+// rescueBasisForTurn gives a held automatic pin this request's scored rescue
+// shortlist without changing the primary decision's selected arm or binding.
+func rescueBasisForTurn(decision router.Decision, turn turnLoopResult) router.Decision {
+	if decision.Metadata == nil && turn.StickyHit && !turn.HardPinned && turn.Fresh.Metadata != nil {
+		metadata := *turn.Fresh.Metadata
+		heldTier := catalog.TierFor(decision.Model)
+		metadata.RescueModels = retainRescueModelsAtOrAboveTier(metadata.RescueModels, heldTier)
+		metadata.CandidateModels = retainRescueModelsAtOrAboveTier(metadata.CandidateModels, heldTier)
+		if catalog.TierFor(metadata.PairedModel) < heldTier {
+			metadata.PairedModel = ""
+		}
+		decision.Metadata = &metadata
+	}
+	return decision
+}
+
+func retainRescueModelsAtOrAboveTier(modelIDs []string, minimumTier catalog.Tier) []string {
+	retained := make([]string, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		if minimumTier == catalog.TierUnknown || catalog.TierFor(modelID) >= minimumTier {
+			retained = append(retained, modelID)
+		}
+	}
+	return retained
+}
+
 // siblingFailoverDecisions lists the stand-ins for a routed model whose bindings
 // all failed. Roster-backed routes use only their ordered eligible groups;
 // legacy routes append the scored pool and paired model, then prefer other
@@ -319,6 +345,7 @@ func rescueDecisionFor(failed router.Decision, model, provider, reason string) r
 	if failed.Metadata != nil {
 		md := *failed.Metadata
 		md.SelectedArmID = ""
+		md.SelectedRosterArmID = ""
 		md.SelectedUpstreamID = ""
 		md.BindingIndex = 0
 		out.Metadata = &md
