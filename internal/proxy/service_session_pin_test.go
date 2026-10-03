@@ -802,6 +802,31 @@ func TestService_HardPin_HMMExploreBypassesBootHardPin(t *testing.T) {
 	assert.Equal(t, "claude-opus-4-7", rec.Header().Get(proxy.HeaderRouterModel))
 }
 
+func TestService_HardPin_PolicySidecarExploreBypassesBootHardPin(t *testing.T) {
+	sidecar := router.Strategy("hybrid")
+	fr := &fakeRouter{decision: router.Decision{Provider: providers.ProviderAnthropic, Model: "claude-opus-4-7", Reason: "hybrid_policy"}}
+	svc := proxy.NewService(
+		&fakeRouter{decision: router.Decision{Provider: providers.ProviderAnthropic, Model: "claude-sonnet-4-6", Reason: "cluster"}},
+		map[string]providers.Client{providers.ProviderAnthropic: &fakeProvider{}},
+		nil,
+		false,
+		nil,
+		newFakePinStore(),
+		true,
+		providers.ProviderAnthropic,
+		"claude-haiku-4-5",
+		nil,
+	).WithPolicyStrategy(policy.StrategySpec{Strategy: sidecar, Router: fr})
+
+	ctx := router.WithStrategy(authedCtx(uuid.New().String()), sidecar)
+	rec := httptest.NewRecorder()
+	httpReq := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(""))
+	require.NoError(t, svc.ProxyMessages(ctx, []byte(exploreBody), rec, httpReq))
+
+	assert.Equal(t, 1, fr.routeCalls, "a policy sidecar must select subagent turns instead of the boot hard pin")
+	assert.Equal(t, "claude-opus-4-7", rec.Header().Get(proxy.HeaderRouterModel))
+}
+
 func TestService_HMMSubAgentUsesFreshDecision(t *testing.T) {
 	store := newFakePinStore()
 	store.hasPin = true

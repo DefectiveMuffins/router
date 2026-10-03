@@ -299,6 +299,43 @@ func TestPolicyShadowComparisonSeesRoutedSubscriptionHeadroom(t *testing.T) {
 	assert.InDelta(t, 0.20, shadowRequest.SubscriptionHeadroom[0].Windows[0].UsedFraction, 1e-9)
 }
 
+// TestPolicyShadowComparisonSeesHardPinnedSubagentTurnType asserts the shadow
+// policy learns a hard-pinned turn is a subagent, which the pre-loop request
+// cannot tell it.
+func TestPolicyShadowComparisonSeesHardPinnedSubagentTurnType(t *testing.T) {
+	const installID = "99999999-9999-9999-9999-999999999999"
+	shadowStrategy := router.Strategy("future-policy")
+	shadowRouter := &shadowRequestRouter{
+		decision: router.Decision{Provider: providers.ProviderAnthropic, Model: "claude-sonnet-4-6"},
+		requests: make(chan router.Request, 1),
+	}
+	svc := proxy.NewService(
+		&fakeRouter{decision: router.Decision{Provider: providers.ProviderAnthropic, Model: "claude-opus-4-7"}},
+		map[string]providers.Client{providers.ProviderAnthropic: &fakeProvider{}},
+		nil, false, nil, nil, true,
+		providers.ProviderAnthropic, "claude-haiku-4-5", newCaptureTelemetry(),
+	).WithPolicyStrategy(policy.StrategySpec{Strategy: shadowStrategy, Router: shadowRouter})
+
+	ctx := authedCtx(uuid.New().String())
+	ctx = context.WithValue(ctx, proxy.InstallationIDContextKey{}, installID)
+	ctx = context.WithValue(ctx, proxy.PolicyShadowStrategyContextKey{}, shadowStrategy)
+	body := []byte(`{"model":"claude-opus-4-7","metadata":{"user_id":"subagent:Explore"},"messages":[{"role":"user","content":"list go files"}]}`)
+	rec := httptest.NewRecorder()
+	httpReq := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(""))
+
+	require.NoError(t, svc.ProxyMessages(ctx, body, rec, httpReq))
+	require.Equal(t, "claude-haiku-4-5", rec.Header().Get(proxy.HeaderRouterModel))
+
+	var shadowRequest router.Request
+	select {
+	case shadowRequest = <-shadowRouter.requests:
+	case <-time.After(4 * time.Second):
+		t.Fatal("expected the shadow policy to be asked within 4s")
+	}
+	require.NotNil(t, shadowRequest.PolicyTurnContext)
+	assert.Equal(t, "sub_agent_dispatch", shadowRequest.PolicyTurnContext.TurnType)
+}
+
 // TestProxyMessages_RecordsClusterObservation asserts cluster-routed decisions
 // surface every routing-brain field into the telemetry row (W-1339/W-1335).
 func TestProxyMessages_RecordsClusterObservation(t *testing.T) {

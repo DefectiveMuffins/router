@@ -222,3 +222,27 @@ func TestDeriveSessionKeyForRequest_SubAgentsKeepSeparatePinsUnderOneSessionID(t
 		"sub-agent threads sharing a parent session id must not collapse onto one pin",
 	)
 }
+
+func TestDeriveSessionKeyForRequest_OpenCodeSubagentGetsItsOwnPin(t *testing.T) {
+	parentEnv, err := translate.ParseOpenAI([]byte(`{"messages":[{"role":"system","content":"You are opencode"},{"role":"user","content":"Explore the repo"}]}`))
+	require.NoError(t, err)
+	childEnv, err := translate.ParseOpenAI([]byte(`{"messages":[{"role":"system","content":"You are a subagent"},{"role":"user","content":"List the files"}]}`))
+	require.NoError(t, err)
+
+	parentCtx := context.WithValue(context.Background(), ClientIdentityContextKey{}, ClientIdentity{SessionID: "ses_parent", ClientApp: ClientAppOpencode})
+	childIdentity := ClientIdentity{SessionID: "ses_parent", ClientApp: ClientAppOpencode, OpenCodeSubagent: true, OpenCodeChildSessionID: "ses_child"}
+	childCtx := context.WithValue(context.Background(), ClientIdentityContextKey{}, childIdentity)
+	otherChildIdentity := childIdentity
+	otherChildIdentity.OpenCodeChildSessionID = "ses_child_2"
+	otherChildCtx := context.WithValue(context.Background(), ClientIdentityContextKey{}, otherChildIdentity)
+
+	parentKey := deriveSessionKeyForRequest(parentCtx, parentEnv, "api-key")
+	childKey := deriveSessionKeyForRequest(childCtx, childEnv, "api-key")
+	assert.NotEqual(t, parentKey, childKey, "a subagent must not inherit its parent's pin")
+	assert.NotEqual(t, childKey, deriveSessionKeyForRequest(otherChildCtx, childEnv, "api-key"), "sibling subagents keep separate pins")
+	assert.Equal(t, childKey, deriveSessionKeyForRequest(childCtx, childEnv, "api-key"), "a subagent's pin is stable across its turns")
+	assert.Equal(t,
+		deriveForceModelSessionKeyForRequest(parentCtx, parentEnv, "api-key", parentKey),
+		deriveForceModelSessionKeyForRequest(childCtx, childEnv, "api-key", childKey),
+		"an explicit force still covers the whole OpenCode session")
+}

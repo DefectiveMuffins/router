@@ -41,8 +41,9 @@ func ClientIdentityFromHeaders(h http.Header) ClientIdentity {
 	}
 	if id.ClientApp == ClientAppOpencode {
 		id.OpenCodeSubagent = requestcontext.IsOpenCodeSubagent(h)
+		id.OpenCodeChildSessionID = requestcontext.OpenCodeChildSessionIDFromHeaders(h)
 		if id.SessionID == "" {
-			id.SessionID = requestcontext.OpenCodeSessionIDFromHeaders(h)
+			id.SessionID = requestcontext.OpenCodeClientSessionIDFromHeaders(h)
 		}
 	}
 	return id
