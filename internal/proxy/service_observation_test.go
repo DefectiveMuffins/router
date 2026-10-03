@@ -257,6 +257,48 @@ func TestPolicyShadowComparisonCollectsUsageBypassRoute(t *testing.T) {
 	assert.False(t, row.ModelsAgree)
 }
 
+// TestPolicyShadowComparisonSeesRoutedSubscriptionHeadroom asserts the shadow
+// policy is asked with the quota state the serving turn loop resolved, not the
+// pre-loop request that lacks it.
+func TestPolicyShadowComparisonSeesRoutedSubscriptionHeadroom(t *testing.T) {
+	const installID = "88888888-8888-8888-8888-888888888888"
+	shadowStrategy := router.Strategy("future-policy")
+	shadowRouter := &shadowRequestRouter{
+		decision: router.Decision{Provider: providers.ProviderOpenAI, Model: "gpt-5.5"},
+		requests: make(chan router.Request, 1),
+	}
+	observer := usage.NewObserver([]byte("salt"), 10*time.Minute, time.Now)
+	observer.Record(observer.Key([]byte(bypassSubToken)), usage.Snapshot{
+		Primary:    usage.Window{UsedPercent: 0.20, WindowMinutes: 300},
+		ObservedAt: time.Now(),
+	})
+	svc := proxy.NewService(
+		&fakeRouter{decision: router.Decision{Provider: providers.ProviderAnthropic, Model: bypassScorerPickMdl}},
+		map[string]providers.Client{providers.ProviderAnthropic: &fakeProvider{}},
+		nil, false, nil, nil, false,
+		providers.ProviderAnthropic, bypassScorerPickMdl, newCaptureTelemetry(),
+	).WithSubscriptionAwareRouting(observer, 0.05, 2.0).
+		WithPolicyStrategy(policy.StrategySpec{Strategy: shadowStrategy, Router: shadowRouter})
+
+	ctx := bypassCtx(0.80)
+	ctx = context.WithValue(ctx, proxy.InstallationIDContextKey{}, installID)
+	ctx = context.WithValue(ctx, proxy.PolicyShadowStrategyContextKey{}, shadowStrategy)
+	recorder, request, body := bypassRequest(t)
+
+	require.NoError(t, svc.ProxyMessages(ctx, body, recorder, request))
+
+	var shadowRequest router.Request
+	select {
+	case shadowRequest = <-shadowRouter.requests:
+	case <-time.After(4 * time.Second):
+		t.Fatal("expected the shadow policy to be asked within 4s")
+	}
+	require.Len(t, shadowRequest.SubscriptionHeadroom, 1)
+	assert.Equal(t, providers.ProviderAnthropic, shadowRequest.SubscriptionHeadroom[0].Provider)
+	require.Len(t, shadowRequest.SubscriptionHeadroom[0].Windows, 1)
+	assert.InDelta(t, 0.20, shadowRequest.SubscriptionHeadroom[0].Windows[0].UsedFraction, 1e-9)
+}
+
 // TestProxyMessages_RecordsClusterObservation asserts cluster-routed decisions
 // surface every routing-brain field into the telemetry row (W-1339/W-1335).
 func TestProxyMessages_RecordsClusterObservation(t *testing.T) {

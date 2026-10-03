@@ -3769,7 +3769,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 		err := s.bypassToAnthropic(ctx, env, feats, routeRes.modelSwitched(), requestStart, requestID, externalID, routeRes.TurnType, routeRes.Decision.Reason, r, w)
 		if !errors.Is(err, errBypassRetryable) {
 			if !agentShadowMode {
-				s.firePolicyShadowForServingDecision(ctx, routeRes.Decision, req)
+				s.firePolicyShadowForServingDecision(ctx, routeRes.Decision, routeRes.withRoutedQuotaState(req))
 			}
 			return err
 		}
@@ -3823,7 +3823,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 	routeRes.SuggestionMode = r.Header.Get("x-weave-suggestion-mode") == "true"
 	decision := routeRes.Decision
 	if !agentShadowMode {
-		s.firePolicyShadowForServingDecision(ctx, decision, req)
+		s.firePolicyShadowForServingDecision(ctx, decision, routeRes.withRoutedQuotaState(req))
 	}
 	tt := routeRes.TurnType
 	stickyHit := routeRes.StickyHit
@@ -6787,7 +6787,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	}
 	routeRes.SuggestionMode = r.Header.Get("x-weave-suggestion-mode") == "true"
 	decision := routeRes.Decision
-	s.firePolicyShadowForServingDecision(ctx, decision, routeRequest)
+	s.firePolicyShadowForServingDecision(ctx, decision, routeRes.withRoutedQuotaState(routeRequest))
 	tt := routeRes.TurnType
 	stickyHit := routeRes.StickyHit
 	pinTier := routeRes.PinTier
