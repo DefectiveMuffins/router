@@ -9,6 +9,7 @@ import (
 	"weave-os/router/internal/auth"
 	"weave-os/router/internal/billing"
 	"weave-os/router/internal/providers"
+	"weave-os/router/internal/subscriptions"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -346,4 +347,56 @@ func TestEnabledProvidersForRequest_VendorByokKeyDoesNotDisplaceVendors(t *testi
 
 	assert.Contains(t, got, providers.ProviderOpenAI,
 		"a vendor BYOK key is not a gateway and must not narrow the eligible set")
+}
+
+// TestEnabledProvidersForRequest_ManagedPoolEnrollsUpstream covers a
+// self-hosted router with no deployment keys: a server-side enrolled account
+// is the only credential, so it must admit its upstream to routing.
+func TestEnabledProvidersForRequest_ManagedPoolEnrollsUpstream(t *testing.T) {
+	s := &Service{
+		clients: dispatch.NewClients(map[string]providers.Client{
+			providers.ProviderAnthropic: nil,
+			providers.ProviderOpenAI:    nil,
+		}),
+		deploymentKeyedProviders:     map[string]struct{}{},
+		passthroughEligibleProviders: map[string]struct{}{},
+	}
+	enrolled := func(pools ...auth.SubscriptionProvider) context.Context {
+		set := make(map[auth.SubscriptionProvider]struct{}, len(pools))
+		for _, p := range pools {
+			set[p] = struct{}{}
+		}
+		return context.WithValue(routerKeyedCtx(), ManagedSubscriptionProvidersContextKey{}, set)
+	}
+
+	t.Run("an enrolled Codex pool admits OpenAI only", func(t *testing.T) {
+		got := s.enabledProvidersForRequest(enrolled(auth.SubscriptionProvider(subscriptions.ProviderCodex)), providers.ProviderOpenAI, http.Header{})
+		assert.Contains(t, got, providers.ProviderOpenAI)
+		assert.NotContains(t, got, providers.ProviderAnthropic)
+	})
+
+	t.Run("an enrolled Claude pool admits Anthropic only", func(t *testing.T) {
+		got := s.enabledProvidersForRequest(enrolled(auth.SubscriptionProvider(subscriptions.ProviderClaude)), providers.ProviderOpenAI, http.Header{})
+		assert.Contains(t, got, providers.ProviderAnthropic)
+		assert.NotContains(t, got, providers.ProviderOpenAI)
+	})
+
+	t.Run("an exhausted pool admits nothing", func(t *testing.T) {
+		ctx := context.WithValue(enrolled(auth.SubscriptionProvider(subscriptions.ProviderCodex)), ManagedSubscriptionPlanStatesContextKey{},
+			map[subscriptions.Provider]SubscriptionPlanState{subscriptions.ProviderCodex: SubscriptionPlanStateExhausted})
+		got := s.enabledProvidersForRequest(ctx, providers.ProviderOpenAI, http.Header{})
+		assert.Empty(t, got)
+	})
+
+	t.Run("no enrollment admits nothing", func(t *testing.T) {
+		got := s.enabledProvidersForRequest(routerKeyedCtx(), providers.ProviderOpenAI, http.Header{})
+		assert.Empty(t, got)
+	})
+
+	t.Run("pool-only OpenAI excludes models the Codex plan does not cover", func(t *testing.T) {
+		ctx := enrolled(auth.SubscriptionProvider(subscriptions.ProviderCodex))
+		got := s.excludeCodexOAuthOnlyModels(ctx, http.Header{}, map[string]struct{}{providers.ProviderOpenAI: {}}, nil)
+		assert.Contains(t, got, "gpt-5.4-nano")
+		assert.NotContains(t, got, "gpt-5.6-sol")
+	})
 }

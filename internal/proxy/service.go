@@ -5991,6 +5991,13 @@ func (s *Service) enabledProvidersForRequest(ctx context.Context, surfaceProvide
 	if codexSubscriptionFromContext(ctx) != nil {
 		out[providers.ProviderOpenAI] = struct{}{}
 	}
+	// Server-side enrollment leases its token only at dispatch, so without a
+	// deployment key the provider would never reach the scorer.
+	for provider, upstream := range managedSubscriptionUpstreams {
+		if managedSubscriptionRoutable(ctx, provider) {
+			out[upstream] = struct{}{}
+		}
+	}
 	// Client-supplied headers are only consulted when NOT authed via a
 	// router key. A router-key-authed request carrying an inbound bearer
 	// must not enable OpenAI-compat upstreams that share the Authorization
@@ -6056,7 +6063,7 @@ func (s *Service) excludeCodexOAuthOnlyModels(
 	excluded map[string]struct{},
 ) map[string]struct{} {
 	codex, _ := presentSubscriptionTokens(ctx, headers)
-	if codex == "" || (!billing.SubscriptionOnlyFromContext(ctx) && s.hasOpenAIInfrastructureCredential(ctx, headers)) {
+	if (codex == "" && !managedSubscriptionRoutable(ctx, subscriptions.ProviderCodex)) || (!billing.SubscriptionOnlyFromContext(ctx) && s.hasOpenAIInfrastructureCredential(ctx, headers)) {
 		return excluded
 	}
 	for _, model := range catalog.Models {
