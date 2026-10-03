@@ -312,20 +312,32 @@ type turnLoopResult struct {
 	// whether the off-by-default downgrade guards would have held the pin.
 	// Observation only: it never touches Decision.
 	DowngradeShadow downgradeGuardShadow
-	// subscription quota state the turn was routed with, so the comparison-only
-	// policy shadow sees the same costs as the serving decision.
+	// subscription quota state and turn context the turn was routed with, so
+	// the comparison-only policy shadow sees the same inputs as the serving
+	// decision.
 	subsidizedModelCostFactor map[string]float64
 	subscriptionHeadroom      []router.SubscriptionHeadroom
+	policyTurnContext         *router.PolicyTurnContext
 }
 
-// withRoutedQuotaState copies the quota state the turn loop resolved onto req,
-// which callers built before the loop ran.
-func (r turnLoopResult) withRoutedQuotaState(req router.Request) router.Request {
+// withRoutedState copies the quota state and turn context the turn loop
+// resolved onto req, which callers built before the loop ran. Hard-pinned
+// turns never build a full turn context, so they still carry their turn type.
+func (r turnLoopResult) withRoutedState(req router.Request) router.Request {
 	if r.subsidizedModelCostFactor != nil {
 		req.SubsidizedModelCostFactor = r.subsidizedModelCostFactor
 	}
 	if r.subscriptionHeadroom != nil {
 		req.SubscriptionHeadroom = r.subscriptionHeadroom
+	}
+	switch {
+	case r.policyTurnContext != nil:
+		req.PolicyTurnContext = r.policyTurnContext
+	case r.TurnType != "":
+		req.PolicyTurnContext = &router.PolicyTurnContext{
+			TurnType:   string(r.TurnType),
+			CacheState: router.PolicyCacheStateUnknown,
+		}
 	}
 	return req
 }
@@ -531,9 +543,10 @@ func (r turnLoopResult) rescueOrigin() policy.OverrideSource {
 // or carry their own dedicated flow (Claude Code's compaction turn, whose
 // request the router must not rewrite). SubAgentDispatch hard-pins when an
 // explicit per-sub-agent override is configured (any strategy) or when the
-// legacy hardPinExplore is on under the cluster scorer; the HMM classifier
-// selects sub-agent turns like any other turn, so that legacy default does not
-// force them. Classifier turns are scored (see isUnpinnedScoredTurn).
+// legacy hardPinExplore is on under the cluster scorer; opt-in strategies
+// (HMM, policy sidecars) select sub-agent turns like any other turn, so that
+// legacy default does not force them. Classifier turns are scored (see
+// isUnpinnedScoredTurn).
 func (s *Service) isHardPinnedTurn(ctx context.Context, tt turntype.TurnType) bool {
 	switch tt {
 	case turntype.Compaction, turntype.Probe, turntype.TitleGen:
@@ -542,7 +555,7 @@ func (s *Service) isHardPinnedTurn(ctx context.Context, tt turntype.TurnType) bo
 		if s.hasSubAgentOverride() {
 			return true
 		}
-		return s.hardPinExplore && !router.IsHMMStrategy(router.StrategyFromContext(ctx))
+		return s.hardPinExplore && router.StrategyFromContext(ctx) == router.StrategyCluster
 	default:
 		return false
 	}
@@ -581,6 +594,7 @@ func (s *Service) routeWithoutPin(
 		return res, nil
 	}
 	req.PolicyTurnContext = buildPolicyTurnContext(req, res, sessionpin.Pin{}, sessionpin.Pin{})
+	res.policyTurnContext = req.PolicyTurnContext
 	if dec, ok := s.usageBypassDecision(ctx, reqHeaders, req, nil, res.TurnType); ok {
 		res.Decision = dec
 		res.UsageBypass = true
@@ -719,6 +733,9 @@ func (s *Service) runTurnLoop(
 	req router.Request,
 ) (res turnLoopResult, routeErr error) {
 	defer func() {
+		if res.policyTurnContext == nil {
+			res.policyTurnContext = req.PolicyTurnContext
+		}
 		if routeErr == nil {
 			routeErr = policyPinServed(ctx, res)
 			if routeErr == nil {
