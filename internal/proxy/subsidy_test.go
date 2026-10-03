@@ -12,6 +12,7 @@ import (
 	"weave-os/router/internal/auth"
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/proxy/usage"
+	"weave-os/router/internal/router"
 	"weave-os/router/internal/subscriptions/entitlement"
 )
 
@@ -247,4 +248,23 @@ func TestSubscriptionHeadroom_FlagsExhaustedWindowUntilReset(t *testing.T) {
 	assert.True(t, headroomFromSnapshot(providers.ProviderOpenAI, snap, now).Exhausted)
 	assert.False(t, headroomFromSnapshot(providers.ProviderOpenAI, snap, now.Add(2*time.Hour)).Exhausted,
 		"a spent window is no longer exhausted once its reset has passed")
+}
+
+func TestSubscriptionHeadroom_ReportsScopedLimitsWithoutExhaustingLane(t *testing.T) {
+	now := time.Date(2026, 10, 2, 19, 0, 0, 0, time.UTC)
+	snap := usage.Snapshot{
+		Secondary: usage.Window{UsedPercent: 0.3, WindowMinutes: 10080},
+		Scoped: map[string]usage.ScopedWindow{
+			usage.ScopeOpus:  {Window: usage.Window{UsedPercent: 1, WindowMinutes: 10080, ResetAt: now.Add(time.Hour)}, Status: "rejected"},
+			usage.ScopeFable: {Window: usage.Window{UsedPercent: 0.84, WindowMinutes: 10080}, Status: "allowed_warning"},
+		},
+		ObservedAt: now,
+	}
+	lane := headroomFromSnapshot(providers.ProviderAnthropic, snap, now)
+	assert.False(t, lane.Exhausted, "a spent Opus limit leaves the rest of the plan serving")
+	require.Len(t, lane.Windows, 3)
+	assert.Equal(t, "", lane.Windows[0].Scope)
+	assert.Equal(t, router.QuotaWindow{Name: "secondary", UsedFraction: 0.84, WindowMinutes: 10080, Scope: "fable", Status: "allowed_warning"}, lane.Windows[1])
+	assert.Equal(t, "opus", lane.Windows[2].Scope)
+	assert.Equal(t, "rejected", lane.Windows[2].Status)
 }
