@@ -290,6 +290,7 @@ type routeRequest struct {
 	CandidateModels           []string          `json:"candidate_models"`
 	CandidateProviders        map[string]string `json:"candidate_providers"`
 	SubscriptionHeadroom      []routeHeadroom   `json:"subscription_headroom,omitempty"`
+	RequestedEffort           string            `json:"requested_effort,omitempty"`
 }
 
 // routeHeadroom is one subscription lane's observed quota state. Optional:
@@ -867,6 +868,7 @@ func marshalRouteRequest(query policy.Query) ([]byte, error) {
 		CandidateModels:           models,
 		CandidateProviders:        providerMap,
 		SubscriptionHeadroom:      routeHeadroomList(query.SubscriptionHeadroom),
+		RequestedEffort:           query.RequestedEffort,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal policy route request: %w", err)

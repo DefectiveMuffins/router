@@ -182,6 +182,11 @@ lanes are omitted, and nothing in it identifies the credential:
 the raw windows let a policy weigh time-to-reset itself. `policy_router_v4`
 classifier requests never carry it.
 
+Requests may also carry `requested_effort`: the explicit reasoning level the
+client asked for in the request body (`low`, `medium`, `high`, `xhigh` or
+`max`), so a policy can avoid choosing below it. It is omitted when the client
+sent a thinking budget, `auto`, or no reasoning setting.
+
 Return the offered `roster_id`. `selected_provider` may be omitted; if present,
 it must exactly match the candidate binding. The generic `policy_route_key`
 holds any policy-internal arm, bucket, cluster, or mode. During migration,

@@ -2974,6 +2974,18 @@ func (s *Service) withPolicyRequestContext(ctx context.Context, req router.Reque
 	return req
 }
 
+// requestedEffortContextKey carries the client's reasoning level when the
+// envelope being routed is a translation that no longer holds it.
+type requestedEffortContextKey struct{}
+
+func requestedEffort(ctx context.Context, env *translate.RequestEnvelope) string {
+	if effort := env.RequestedEffort(); effort != "" {
+		return effort
+	}
+	effort, _ := ctx.Value(requestedEffortContextKey{}).(string)
+	return effort
+}
+
 func policyRolloutIDFromContext(ctx context.Context) string {
 	if rolloutID, ok := ctx.Value(PolicyRolloutIDContextKey{}).(string); ok && rolloutID != "" {
 		return rolloutID
@@ -3688,6 +3700,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 	routeStart := time.Now()
 	req := router.Request{
 		RequestedModel:               feats.Model,
+		RequestedEffort:              env.RequestedEffort(),
 		ClientBudget:                 clientBudget,
 		ForceModel:                   forceModel,
 		ForceCluster:                 forceCluster,
@@ -6729,6 +6742,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 
 	routeRequest := router.Request{
 		RequestedModel:               feats.Model,
+		RequestedEffort:              requestedEffort(ctx, env),
 		ForceModel:                   forceModel,
 		ForceCluster:                 forceCluster,
 		EstimatedInputTokens:         feats.Tokens,
@@ -8176,6 +8190,13 @@ func (s *Service) ProxyOpenAIResponses(ctx context.Context, body []byte, w http.
 		return inputErr
 	}
 	ctx = s.withUsageObserver(ctx, r.Header, routePathResponses)
+	// The chat projection drops reasoning.effort, so record the caller's level
+	// from the native body for the policy route request.
+	if native, parseErr := translate.ParseOpenAI(body); parseErr == nil {
+		if effort := native.RequestedEffort(); effort != "" {
+			ctx = context.WithValue(ctx, requestedEffortContextKey{}, effort)
+		}
+	}
 	clientApp := ClientIdentityFrom(ctx).ClientApp
 	portableCodex := clientApp == ClientAppCodex
 	terminalResponses := supportsResponsesTerminalSurfaces(clientApp)

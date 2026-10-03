@@ -83,6 +83,20 @@ func ParseReasoningIntent(format Format, body []byte) ReasoningIntent {
 	return ReasoningIntent{}
 }
 
+// RequestedEffort is the explicit reasoning level the client asked for,
+// canonicalized; empty for budgets, auto, disabled, or no reasoning field.
+func (e *RequestEnvelope) RequestedEffort() string {
+	intent := e.ReasoningIntent()
+	if intent.Kind != ReasoningLevel {
+		return ""
+	}
+	level := router.CanonicalizeEffort(intent.Level)
+	if !router.IsValidEffort(level) {
+		return ""
+	}
+	return level
+}
+
 func parseReasoningEffort(value gjson.Result, source string) ReasoningIntent {
 	if !value.Exists() || value.Type != gjson.String {
 		return ReasoningIntent{}
