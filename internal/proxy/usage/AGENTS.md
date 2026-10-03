@@ -10,6 +10,7 @@ Tracks the most recent rate-limit utilization each subscription backend reports 
 
 - **Claude** (`api.anthropic.com`, OAuth) — `anthropic-ratelimit-unified-{5h,7d}-*` quota windows and the plain `representative-claim: overage` together with `overage-in-use: true` (active paid usage), via `ParseAnthropicUnifiedHeaders`. The paid signal can arrive without either quota window. `seven_day_overage_included` is a distinct claim with unvalidated billing semantics.
 - **Codex** (`chatgpt.com/backend-api/codex`) — `x-codex-{primary,secondary}-*`, via `ParseCodexHeaders`.
+- **Claude model-family limits** — `Snapshot.Scoped`: the Fable allowance from `anthropic-ratelimit-unified-7d_oi-*`, and the weekly Opus / Sonnet limits, which arrive only as a `seven_day_opus` / `seven_day_sonnet` representative claim with the unified status and reset. Scoped limits are reported to policy sidecars but never mark the credential exhausted and never feed `CostFactor`: one family's cap leaves the plan serving every other model.
 
 `Snapshot.CostFactor(epsilon, gamma)` turns the binding (more-used) window's utilization into a multiplier on a covered model's catalog cost: ~epsilon when the window has slack, rising to 1.0 (full price) as it binds. Claude overage is always full price. Quota is perishable (resets each window), so unused headroom has zero salvage value — spend it, back off only as the cap nears.
 

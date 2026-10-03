@@ -62,6 +62,28 @@ type Window struct {
 
 func (w Window) present() bool { return w.WindowMinutes > 0 || w.UsedPercent > 0 }
 
+// Model-family scopes Anthropic meters beside the account-wide windows. A
+// scoped limit binds only the models in that family; the credential keeps
+// serving every other model.
+const (
+	// ScopeFable is the weekly Fable allowance (wire window "7d_oi", claim
+	// seven_day_overage_included): a cap within the shared weekly pool.
+	ScopeFable = "fable"
+	// ScopeOpus is the weekly Opus limit, reported only as a claim + status.
+	ScopeOpus = "opus"
+	// ScopeSonnet is the weekly Sonnet limit, reported only as a claim + status.
+	ScopeSonnet = "sonnet"
+)
+
+// ScopedWindow is one model-family limit. Opus and Sonnet arrive as a
+// representative claim with no utilization figure, so Status is the only
+// signal for them: UsedPercent is 1 when rejected and 0 (unknown) otherwise.
+type ScopedWindow struct {
+	Window
+	// Status is the upstream's allowed / allowed_warning / rejected, or empty.
+	Status string
+}
+
 // Snapshot is the most recent observation for one credential: a short rolling
 // window (primary, ~5h) and a long window (secondary, weekly). Either may be
 // zero if the upstream didn't report it.
@@ -72,10 +94,13 @@ type Snapshot struct {
 	OverageInUse        bool
 	UnifiedResetAt      time.Time
 	ObservedAt          time.Time
+	// Scoped holds model-family limits keyed by Scope*. They never mark the
+	// whole credential exhausted and never feed CostFactor.
+	Scoped map[string]ScopedWindow
 }
 
 func (s Snapshot) hasData() bool {
-	return s.OverageInUse || s.RepresentativeClaim != "" || s.Primary.present() || s.Secondary.present()
+	return s.OverageInUse || s.RepresentativeClaim != "" || s.Primary.present() || s.Secondary.present() || len(s.Scoped) > 0
 }
 
 type AnthropicClaim string
@@ -85,7 +110,16 @@ const (
 	AnthropicClaimSevenDay                AnthropicClaim = "seven_day"
 	AnthropicClaimOverage                 AnthropicClaim = "overage"
 	AnthropicClaimSevenDayOverageIncluded AnthropicClaim = "seven_day_overage_included"
+	AnthropicClaimSevenDayOpus            AnthropicClaim = "seven_day_opus"
+	AnthropicClaimSevenDaySonnet          AnthropicClaim = "seven_day_sonnet"
 )
+
+// claimScopes maps model-scoped claims that carry no utilization header of
+// their own to the scope they bind.
+var claimScopes = map[AnthropicClaim]string{
+	AnthropicClaimSevenDayOpus:   ScopeOpus,
+	AnthropicClaimSevenDaySonnet: ScopeSonnet,
+}
 
 func PaidAnthropicOverage(claim AnthropicClaim, overageInUse string) bool {
 	return claim == AnthropicClaimOverage && overageInUse == "true"
@@ -216,7 +250,11 @@ func (o *Observer) freshFor(s Snapshot) time.Duration {
 			horizon = untilReset
 		}
 	}
-	for _, w := range [...]Window{s.Primary, s.Secondary} {
+	windows := []Window{s.Primary, s.Secondary}
+	for _, scoped := range s.Scoped {
+		windows = append(windows, scoped.Window)
+	}
+	for _, w := range windows {
 		if w.UsedPercent < windowConstrainedFraction {
 			continue
 		}
@@ -264,9 +302,31 @@ func (o *Observer) Record(key CredentialKey, snap Snapshot) {
 		if !snap.Secondary.present() {
 			snap.Secondary = prev.Secondary
 		}
+		snap.Scoped = mergeScoped(prev.Scoped, snap.Scoped, o.now())
 	}
 	snap.ObservedAt = o.now()
 	o.data[key] = snap
+}
+
+// mergeScoped keeps a prior scope's reading when the new response omitted it:
+// a representative claim names only the most binding limit, so an Opus warning
+// must not vanish just because the next response led with the 5h window. A
+// prior scope whose reported reset has passed is dropped: that limit refilled.
+func mergeScoped(prev, next map[string]ScopedWindow, now time.Time) map[string]ScopedWindow {
+	if len(prev) == 0 {
+		return next
+	}
+	out := make(map[string]ScopedWindow, len(prev)+len(next))
+	for scope, w := range prev {
+		if !w.ResetAt.IsZero() && !w.ResetAt.After(now) {
+			continue
+		}
+		out[scope] = w
+	}
+	for scope, w := range next {
+		out[scope] = w
+	}
+	return out
 }
 
 // Snapshot returns the most recent non-stale observation for a credential, or
@@ -357,21 +417,46 @@ func ParseAnthropicUnifiedHeaders(h http.Header) (Snapshot, bool) {
 	if !sOK {
 		secondary, sOK = parseAnthropicWindow(h, "weekly", 7*24*60)
 	}
-	claim := AnthropicClaim(h.Get("anthropic-ratelimit-unified-representative-claim"))
+	rawClaim := AnthropicClaim(h.Get("anthropic-ratelimit-unified-representative-claim"))
+	claim := rawClaim
 	switch claim {
 	case AnthropicClaimFiveHour, AnthropicClaimSevenDay, AnthropicClaimOverage, AnthropicClaimSevenDayOverageIncluded:
 	default:
 		claim = ""
 	}
-	if !pOK && !sOK && claim == "" {
+	resetAt, _ := parseResetTime(h.Get("anthropic-ratelimit-unified-reset"))
+	scoped := parseAnthropicScoped(h, rawClaim, resetAt)
+	if !pOK && !sOK && claim == "" && len(scoped) == 0 {
 		return Snapshot{}, false
 	}
-	resetAt, _ := parseResetTime(h.Get("anthropic-ratelimit-unified-reset"))
 	return Snapshot{
 		Primary: primary, Secondary: secondary, RepresentativeClaim: claim,
 		OverageInUse:   PaidAnthropicOverage(claim, h.Get("anthropic-ratelimit-unified-overage-in-use")),
 		UnifiedResetAt: resetAt,
+		Scoped:         scoped,
 	}, true
+}
+
+// parseAnthropicScoped reads model-family limits. Fable has its own window
+// headers ("7d_oi"); Opus and Sonnet are known only when the representative
+// claim names them, in which case the unified status and reset describe them.
+func parseAnthropicScoped(h http.Header, claim AnthropicClaim, unifiedReset time.Time) map[string]ScopedWindow {
+	scoped := map[string]ScopedWindow{}
+	if fable, ok := parseAnthropicWindow(h, "7d_oi", 7*24*60); ok {
+		scoped[ScopeFable] = ScopedWindow{Window: fable, Status: h.Get("anthropic-ratelimit-unified-7d_oi-status")}
+	}
+	if scope, ok := claimScopes[claim]; ok {
+		status := h.Get("anthropic-ratelimit-unified-status")
+		w := Window{WindowMinutes: 7 * 24 * 60, ResetAt: unifiedReset}
+		if status == "rejected" {
+			w.UsedPercent = 1
+		}
+		scoped[scope] = ScopedWindow{Window: w, Status: status}
+	}
+	if len(scoped) == 0 {
+		return nil
+	}
+	return scoped
 }
 
 func parseAnthropicWindow(h http.Header, which string, windowMinutes int) (Window, bool) {

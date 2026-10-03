@@ -521,6 +521,13 @@ type QuotaWindow struct {
 	UsedFraction  float64
 	WindowMinutes int
 	ResetAt       time.Time
+	// Scope is empty for an account-wide window, or the model family a
+	// narrower limit binds ("fable", "opus", "sonnet").
+	Scope string
+	// Status is the upstream's allowed / allowed_warning / rejected when
+	// reported. For claim-only scopes it is the only signal: UsedFraction is
+	// then 1 when rejected and 0 (unknown) otherwise.
+	Status string
 }
 
 type Router interface {

@@ -309,6 +309,8 @@ type routeQuotaWindow struct {
 	UsedFraction  float64 `json:"used_fraction"`
 	WindowMinutes int     `json:"window_minutes,omitempty"`
 	ResetAt       string  `json:"reset_at,omitempty"`
+	Scope         string  `json:"scope,omitempty"`
+	Status        string  `json:"status,omitempty"`
 }
 
 type classifierRequestV4 struct {
@@ -889,6 +891,8 @@ func routeHeadroomList(lanes []router.SubscriptionHeadroom) []routeHeadroom {
 				UsedFraction:  w.UsedFraction,
 				WindowMinutes: w.WindowMinutes,
 				ResetAt:       rfc3339OrEmpty(w.ResetAt),
+				Scope:         w.Scope,
+				Status:        w.Status,
 			})
 		}
 		out = append(out, routeHeadroom{

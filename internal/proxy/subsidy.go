@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"net/http"
+	"sort"
 	"time"
 
 	"weave-os/router/internal/observability"
@@ -350,6 +351,22 @@ func headroomFromSnapshot(provider string, snap usage.Snapshot, now time.Time) r
 			UsedFraction:  w.window.UsedPercent,
 			WindowMinutes: w.window.WindowMinutes,
 			ResetAt:       w.window.ResetAt,
+		})
+	}
+	scopes := make([]string, 0, len(snap.Scoped))
+	for scope := range snap.Scoped {
+		scopes = append(scopes, scope)
+	}
+	sort.Strings(scopes)
+	for _, scope := range scopes {
+		w := snap.Scoped[scope]
+		windows = append(windows, router.QuotaWindow{
+			Name:          "secondary",
+			UsedFraction:  w.UsedPercent,
+			WindowMinutes: w.WindowMinutes,
+			ResetAt:       w.ResetAt,
+			Scope:         scope,
+			Status:        w.Status,
 		})
 	}
 	return router.SubscriptionHeadroom{

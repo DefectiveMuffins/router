@@ -182,6 +182,17 @@ lanes are omitted, and nothing in it identifies the credential:
 the raw windows let a policy weigh time-to-reset itself. `policy_router_v4`
 classifier requests never carry it.
 
+A window with a `scope` is a model-family limit inside the plan rather than an
+account-wide one: `fable` (Anthropic's `7d_oi` window), `opus` or `sonnet`. It
+binds only that family's models and never sets the lane's `exhausted`. Opus and
+Sonnet limits are reported only through the representative claim, so `status`
+(`allowed`, `allowed_warning`, `rejected`) is their only signal: `used_fraction`
+is 1 when rejected and 0, meaning unknown, otherwise.
+
+```json
+{"name": "secondary", "scope": "fable", "status": "allowed_warning", "used_fraction": 0.84, "window_minutes": 10080, "reset_at": "2026-10-09T10:00:00Z"}
+```
+
 Requests may also carry `requested_effort`: the explicit reasoning level the
 client asked for in the request body (`low`, `medium`, `high`, `xhigh` or
 `max`), so a policy can avoid choosing below it. It is omitted when the client

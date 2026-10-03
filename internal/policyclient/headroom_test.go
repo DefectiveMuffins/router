@@ -42,6 +42,29 @@ func TestRouteRequestCarriesSubscriptionHeadroom(t *testing.T) {
 	}]`, string(wire["subscription_headroom"]))
 }
 
+func TestRouteRequestCarriesScopedWindows(t *testing.T) {
+	body, err := marshalRouteRequest(policy.Query{
+		SchemaVersion: policy.SchemaVersionV1,
+		Strategy:      "hybrid",
+		SubscriptionHeadroom: []router.SubscriptionHeadroom{{
+			Provider: "anthropic",
+			Windows: []router.QuotaWindow{
+				{Name: "secondary", UsedFraction: 0.84, WindowMinutes: 10080, Scope: "fable", Status: "allowed_warning"},
+			},
+		}},
+	})
+	require.NoError(t, err)
+	var wire struct {
+		Headroom []struct {
+			Windows []map[string]any `json:"windows"`
+		} `json:"subscription_headroom"`
+	}
+	require.NoError(t, json.Unmarshal(body, &wire))
+	require.Len(t, wire.Headroom, 1)
+	assert.Equal(t, "fable", wire.Headroom[0].Windows[0]["scope"])
+	assert.Equal(t, "allowed_warning", wire.Headroom[0].Windows[0]["status"])
+}
+
 func TestRouteRequestOmitsHeadroomWhenUnobserved(t *testing.T) {
 	body, err := marshalRouteRequest(policy.Query{SchemaVersion: policy.SchemaVersionV1, Strategy: "hybrid"})
 	require.NoError(t, err)
