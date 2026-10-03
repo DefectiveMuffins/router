@@ -50,7 +50,17 @@ func SessionIDFromHeaders(headers http.Header) string {
 // pin. OpenCode names only the immediate parent, so a nested subagent resolves
 // to its spawning subagent.
 func OpenCodeSessionIDFromHeaders(headers http.Header) string {
-	session := NormalizeClientIdentifier(headers.Get(OpenCodeSessionHeader))
+	return openCodeSessionID(headers, NormalizeClientIdentifier(headers.Get(OpenCodeSessionHeader)))
+}
+
+// OpenCodeClientSessionIDFromHeaders is OpenCodeSessionIDFromHeaders for a
+// caller known to be OpenCode, which also accepts the session id OpenCode
+// sends to a custom provider.
+func OpenCodeClientSessionIDFromHeaders(headers http.Header) string {
+	return openCodeSessionID(headers, openCodeOwnSessionID(headers))
+}
+
+func openCodeSessionID(headers http.Header, session string) string {
 	if session == "" {
 		return ""
 	}
@@ -60,10 +70,17 @@ func OpenCodeSessionIDFromHeaders(headers http.Header) string {
 	return session
 }
 
-// IsOpenCodeSubagent reports whether OpenCode's native headers name a child
+func openCodeOwnSessionID(headers http.Header) string {
+	if session := NormalizeClientIdentifier(headers.Get(OpenCodeSessionHeader)); session != "" {
+		return session
+	}
+	return NormalizeClientIdentifier(headers.Get(OpenCodeCustomProviderSessionHeader))
+}
+
+// IsOpenCodeSubagent reports whether an OpenCode caller's headers name a child
 // session with a parent, which OpenCode sends only on subagent requests.
 func IsOpenCodeSubagent(headers http.Header) bool {
-	return NormalizeClientIdentifier(headers.Get(OpenCodeSessionHeader)) != "" &&
+	return openCodeOwnSessionID(headers) != "" &&
 		NormalizeClientIdentifier(headers.Get(OpenCodeParentSessionHeader)) != ""
 }
 

@@ -39,6 +39,11 @@ type ClientIdentity struct {
 // OpenCode core sends on every provider request without a Weave plugin.
 const OpenCodeSessionHeader = "X-OpenCode-Session"
 
+// OpenCodeCustomProviderSessionHeader carries OpenCode's session id on requests
+// to a custom provider, which never receive OpenCodeSessionHeader. The name is
+// generic, so it is read only once the caller is known to be OpenCode.
+const OpenCodeCustomProviderSessionHeader = "X-Session-Id"
+
 // OpenCodeParentSessionHeader names the parent session on OpenCode subagent
 // requests; a subagent runs in a child session with its own id.
 const OpenCodeParentSessionHeader = "X-Parent-Session-Id"
