@@ -155,6 +155,7 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 
 	routeRequest := router.Request{
 		RequestedModel:                   feats.Model,
+		RequestedEffort:                  env.RequestedEffort(),
 		ForceCluster:                     forceCluster,
 		EstimatedInputTokens:             feats.Tokens,
 		HasTools:                         feats.HasTools,

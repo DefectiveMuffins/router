@@ -61,3 +61,17 @@ func TestClassifierV4RequestNeverCarriesHeadroom(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &wire))
 	assert.NotContains(t, wire, "subscription_headroom", "v4 is a fixture-locked classifier contract")
 }
+
+func TestRouteRequestCarriesRequestedEffortOnlyWhenSet(t *testing.T) {
+	body, err := marshalRouteRequest(policy.Query{SchemaVersion: policy.SchemaVersionV1, Strategy: "hybrid", RequestedEffort: "max"})
+	require.NoError(t, err)
+	var wire map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(body, &wire))
+	assert.JSONEq(t, `"max"`, string(wire["requested_effort"]))
+
+	body, err = marshalRouteRequest(policy.Query{SchemaVersion: policy.SchemaVersionV1, Strategy: "hybrid"})
+	require.NoError(t, err)
+	wire = nil
+	require.NoError(t, json.Unmarshal(body, &wire))
+	assert.NotContains(t, wire, "requested_effort")
+}

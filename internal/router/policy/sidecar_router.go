@@ -408,6 +408,7 @@ func (r *SidecarRouter) Route(ctx context.Context, req router.Request) (router.D
 		DebugEnabled:         req.DebugEnabled,
 		Candidates:           resolved.Candidates,
 		SubscriptionHeadroom: req.SubscriptionHeadroom,
+		RequestedEffort:      req.RequestedEffort,
 	})
 	if err != nil {
 		observability.FromContext(ctx).Error("Policy router sidecar decision failed",

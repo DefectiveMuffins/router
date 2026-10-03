@@ -998,3 +998,33 @@ func TestProxyOpenAIResponses_NativeResponseSignals(t *testing.T) {
 }
 
 func ptrTo[T any](v T) *T { return &v }
+
+// TestPolicyShadowSeesResponsesRequestedEffort asserts the caller's
+// reasoning.effort reaches the policy request even though the chat projection
+// the turn loop routes on drops it.
+func TestPolicyShadowSeesResponsesRequestedEffort(t *testing.T) {
+	shadowStrategy := router.Strategy("future-policy")
+	shadowRouter := &shadowRequestRouter{
+		decision: router.Decision{Provider: providers.ProviderOpenAI, Model: "gpt-5.6-sol"},
+		requests: make(chan router.Request, 1),
+	}
+	svc := proxy.NewService(
+		&fakeRouter{decision: router.Decision{Provider: providers.ProviderOpenAI, Model: "gpt-5.6-luna"}},
+		map[string]providers.Client{providers.ProviderOpenAI: &fakeProvider{}},
+		nil, false, nil, nil, false,
+		providers.ProviderOpenAI, "gpt-5.6-sol", newCaptureTelemetry(),
+	).WithPolicyStrategy(policy.StrategySpec{Strategy: shadowStrategy, Router: shadowRouter})
+
+	ctx := context.WithValue(context.Background(), proxy.InstallationIDContextKey{}, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	ctx = context.WithValue(ctx, proxy.PolicyShadowStrategyContextKey{}, shadowStrategy)
+	body := []byte(`{"model":"auto","input":"hi","reasoning":{"effort":"max"}}`)
+	httpReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(""))
+	_ = svc.ProxyOpenAIResponses(ctx, body, httptest.NewRecorder(), httpReq)
+
+	select {
+	case shadowRequest := <-shadowRouter.requests:
+		assert.Equal(t, "max", shadowRequest.RequestedEffort)
+	case <-time.After(4 * time.Second):
+		t.Fatal("expected the shadow policy to be asked within 4s")
+	}
+}

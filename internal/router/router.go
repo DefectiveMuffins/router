@@ -248,6 +248,10 @@ type Request struct {
 	// weigh scarcity themselves rather than only the folded cost factor above;
 	// nil when no subscription is present or nothing has been observed.
 	SubscriptionHeadroom []SubscriptionHeadroom
+	// RequestedEffort is the reasoning level the client asked for in the
+	// request body (canonical: low, medium, high, xhigh, max), so a policy can
+	// avoid choosing below it. Empty when the client sent no explicit level.
+	RequestedEffort string
 	// ClusterArmOverrides is the per-API-key HMM cluster allowlist: cluster label
 	// → ordered catalog model IDs (index 0 = highest priority). Absent clusters
 	// keep the artifact default. Nil means no override.
