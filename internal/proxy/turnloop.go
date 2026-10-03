@@ -312,6 +312,22 @@ type turnLoopResult struct {
 	// whether the off-by-default downgrade guards would have held the pin.
 	// Observation only: it never touches Decision.
 	DowngradeShadow downgradeGuardShadow
+	// subscription quota state the turn was routed with, so the comparison-only
+	// policy shadow sees the same costs as the serving decision.
+	subsidizedModelCostFactor map[string]float64
+	subscriptionHeadroom      []router.SubscriptionHeadroom
+}
+
+// withRoutedQuotaState copies the quota state the turn loop resolved onto req,
+// which callers built before the loop ran.
+func (r turnLoopResult) withRoutedQuotaState(req router.Request) router.Request {
+	if r.subsidizedModelCostFactor != nil {
+		req.SubsidizedModelCostFactor = r.subsidizedModelCostFactor
+	}
+	if r.subscriptionHeadroom != nil {
+		req.SubscriptionHeadroom = r.subscriptionHeadroom
+	}
+	return req
 }
 
 // downgradeGuardShadow is the counterfactual verdict of the downgrade guards on
@@ -850,6 +866,8 @@ func (s *Service) runTurnLoop(
 	// headroom. nil (feature off / no headroom yet) leaves scoring unchanged.
 	req.SubsidizedModelCostFactor = s.subsidyFactors(ctx, reqHeaders)
 	req.SubscriptionHeadroom = s.subscriptionHeadroom(ctx, reqHeaders)
+	res.subsidizedModelCostFactor = req.SubsidizedModelCostFactor
+	res.subscriptionHeadroom = req.SubscriptionHeadroom
 
 	// Explicit user force outranks every automatic fast path, including hard
 	// pins. Legacy thread-scoped forces keep their original thread boundary.
