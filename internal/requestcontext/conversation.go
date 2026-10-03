@@ -77,6 +77,15 @@ func openCodeOwnSessionID(headers http.Header) string {
 	return NormalizeClientIdentifier(headers.Get(OpenCodeCustomProviderSessionHeader))
 }
 
+// OpenCodeChildSessionIDFromHeaders returns an OpenCode subagent's own session
+// id, or "" when the request is not from a child session.
+func OpenCodeChildSessionIDFromHeaders(headers http.Header) string {
+	if !IsOpenCodeSubagent(headers) {
+		return ""
+	}
+	return openCodeOwnSessionID(headers)
+}
+
 // IsOpenCodeSubagent reports whether an OpenCode caller's headers name a child
 // session with a parent, which OpenCode sends only on subagent requests.
 func IsOpenCodeSubagent(headers http.Header) bool {

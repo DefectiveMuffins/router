@@ -33,6 +33,9 @@ type ClientIdentity struct {
 	// OpenCodeSubagent marks an OpenCode child-session request. Routing
 	// metadata only: never used for auth, billing, or provider eligibility.
 	OpenCodeSubagent bool
+	// OpenCodeChildSessionID is the subagent's own session id on an OpenCode
+	// child-session request; SessionID names the parent. Empty otherwise.
+	OpenCodeChildSessionID string
 }
 
 // OpenCodeSessionHeader carries OpenCode's own session id (ses_...), which

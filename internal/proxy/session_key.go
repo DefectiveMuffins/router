@@ -139,9 +139,21 @@ func deriveSessionKeyForRequest(ctx context.Context, env *translate.RequestEnvel
 	if claims := piSessionFromContext(ctx); claims != nil && claims.APIKeyID == apiKeyID && claims.matches(ctx, env) {
 		return claims.SessionKey
 	}
-	key := deriveSessionKey(env, sessionCredentialIdentity(ctx, apiKeyID), clientSessionIDForRequest(ctx, env))
+	key := deriveSessionKey(env, sessionCredentialIdentity(ctx, apiKeyID), threadSessionIDForRequest(ctx, env))
 	copy(key[:], requestcontext.ServingStateKey(ctx, key[:]))
 	return key
+}
+
+// threadSessionIDForRequest scopes the pin to an OpenCode subagent's own
+// session. Its client session id names the parent, and OpenCode's bodies lead
+// with a system message, so the first-user-message discriminator cannot split
+// the child from its parent.
+func threadSessionIDForRequest(ctx context.Context, env *translate.RequestEnvelope) string {
+	id := clientSessionIDForRequest(ctx, env)
+	if child := ClientIdentityFrom(ctx).OpenCodeChildSessionID; child != "" && id != "" {
+		return id + "\x00subagent:" + child
+	}
+	return id
 }
 
 const (
