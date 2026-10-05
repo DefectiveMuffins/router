@@ -776,6 +776,7 @@ func main() {
 	// Kill switch for degrading to a same-cluster candidate when the routed
 	// model's bindings are all exhausted by a transient upstream fault.
 	siblingFailover := config.GetOr("ROUTER_SIBLING_FAILOVER", "true") == "true"
+	heldCredentialFailover := config.GetOr("ROUTER_HELD_CREDENTIAL_FAILOVER", "false") == "true"
 	openAIResponsesBroad := config.GetOr("ROUTER_OPENAI_RESPONSES_BROAD", "true") == "true"
 	allowedModelsHeader := config.GetOr("ROUTER_ALLOWED_MODELS_HEADER", "false") == "true"
 	// Session-level demotion of an arm whose stream died after commit. Off
@@ -1310,6 +1311,7 @@ func main() {
 		WithCyberRefusalFallbackModel(cyberRefusalFallbackModel).
 		WithAnthropicServerSideFallback(anthropicServerSideFallback).
 		WithSiblingFailover(siblingFailover).
+		WithHeldCredentialFailover(heldCredentialFailover).
 		WithOpenAIResponsesBroad(openAIResponsesBroad).
 		WithAllowedModelsHeader(allowedModelsHeader).
 		WithCommittedStreamArmDemotion(committedStreamArmDemotion).

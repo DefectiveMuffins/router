@@ -331,6 +331,27 @@ func TestDetectFromEnvelope_Anthropic(t *testing.T) {
 			want: turntype.Recap,
 		},
 		{
+			// Newer Claude Code sends the away summary as a standalone side call:
+			// the instruction lives in the system prompt and the user turn is a
+			// state digest.
+			name: "claude code system-prompt away summary is recap",
+			body: `{"model":"claude-haiku-4-5","max_tokens":3072,"system":[
+				{"type":"text","text":"A user kicked off a Claude Code agent to do a coding task and walked away. Summarize where it stands."}
+			],"messages":[
+				{"role":"user","content":"Current state: working (for 0m)\nTool calls so far: Read\nUser's most recent ask: summarize the file"}
+			]}`,
+			want: turntype.Recap,
+		},
+		{
+			// The tool-bearing main loop that merely mentions the phrase in its
+			// system prompt is still a normal turn.
+			name: "away-summary phrase in a tool-bearing system prompt stays main_loop",
+			body: `{"model":"claude-opus-5","max_tokens":32000,"tools":[{"name":"Bash","input_schema":{"type":"object"}}],"system":"A user kicked off a Claude Code agent to do a coding task and walked away.","messages":[
+				{"role":"user","content":"review the PR"}
+			]}`,
+			want: turntype.MainLoop,
+		},
+		{
 			// A user quoting the instruction is asking about it, not for a recap.
 			name: "user quoting the recap instruction stays main_loop",
 			body: `{"model":"claude-opus-5","max_tokens":32000,"messages":[

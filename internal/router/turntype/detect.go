@@ -53,6 +53,10 @@ const codexCompactionMarkerPhrase = "you are performing a context checkpoint com
 // appends as the trailing user message of a forked copy of the conversation.
 const recapMarkerPhrase = "the user stepped away and is coming back. recap in under"
 
+// awaySummaryMarkerPhrase opens the standalone, tool-free away-summary side
+// call newer Claude Code versions send with the instruction in the system prompt.
+const awaySummaryMarkerPhrase = "a user kicked off a claude code agent to do a coding task and walked away"
+
 // openCodeTitlePromptPrefix opens the system prompt of OpenCode's built-in
 // title agent. OpenCode 2.x identifies this request from its native prompt,
 // gated on the detected client rather than a plugin-provided header.
@@ -130,7 +134,7 @@ func Detect(env *translate.RequestEnvelope, feats translate.RoutingFeatures, sub
 	if isCodexCompaction(lastUserText) {
 		return Compaction
 	}
-	if env.SourceFormat() == translate.FormatAnthropic && isRecap(lastUserText) {
+	if env.SourceFormat() == translate.FormatAnthropic && (isRecap(lastUserText) || isAwaySummary(systemText, feats.HasTools)) {
 		return Recap
 	}
 	if openCode.IsSubagent ||
@@ -249,6 +253,18 @@ func isRecap(lastUserText string) bool {
 		text = strings.TrimSpace(text[end+len(systemReminderClose):])
 	}
 	return strings.HasPrefix(strings.ToLower(text), recapMarkerPhrase)
+}
+
+// isAwaySummary reports whether a tool-free request carries Claude Code's
+// system-prompt away-summary instruction. Tools mean a real agent turn.
+func isAwaySummary(systemText string, hasTools bool) bool {
+	if hasTools {
+		return false
+	}
+	if len(systemText) > compactionSniffLen {
+		systemText = systemText[:compactionSniffLen]
+	}
+	return strings.Contains(strings.ToLower(systemText), awaySummaryMarkerPhrase)
 }
 
 // isSubAgentDispatch reports whether the request originates from a sub-agent:
