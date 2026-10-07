@@ -181,6 +181,9 @@ var registry = map[string]ModelSpec{
 	// claude-haiku-4-5 400s on thinking.type=adaptive, which Claude Code
 	// bodies carry after a downgrade from opus.
 	"claude-haiku-4-5": anthropicExtended,
+	// Haiku 5.5 takes adaptive thinking at all five efforts and still accepts
+	// forced tool_choice; it has no server-side fallback.
+	"claude-haiku-5-5": anthropicAdaptiveXhigh,
 	"claude-opus-4-5":  anthropicExtended,
 	"claude-opus-4-1":  anthropicExtended,
 	"claude-opus-4-0":  anthropicExtended,

@@ -248,6 +248,15 @@ var Models = []Model{
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 1.00, OutputUSDPer1M: 5.00}},
 		{Provider: providers.ProviderOpenAIGateway, Price: Pricing{InputUSDPer1M: 1.00, OutputUSDPer1M: 5.00}},
 	}},
+	// Haiku 5.5: $0.10/$0.50 up to 100K prompt tokens, $0.50/$2.50 above;
+	// cache reads 0.1x and 5-minute writes 1.25x in both tiers. Native 1M
+	// context, adaptive thinking with all five effort levels.
+	{ID: "claude-haiku-5-5", Source: SourceClosedSource, Tier: TierLow, ContextWindow: 1_000_000, Providers: []ProviderBinding{
+		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 0.10, OutputUSDPer1M: 0.50, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.10,
+			LongContext: &LongContextPricing{ThresholdTokens: 100_000, InputUSDPer1M: 0.50, OutputUSDPer1M: 2.50, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.10}}},
+		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 0.10, OutputUSDPer1M: 0.50, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.10,
+			LongContext: &LongContextPricing{ThresholdTokens: 100_000, InputUSDPer1M: 0.50, OutputUSDPer1M: 2.50, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.10}}},
+	}},
 	{ID: "claude-sonnet-4-5", Source: SourceClosedSource, Tier: TierMid, ContextWindow: 200_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00, CacheReadMultiplier: 0.10}},
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00}},

@@ -1,5 +1,5 @@
 {
-  "pricing_version": "catalog-sha256:c4319170e42a2666",
+  "pricing_version": "catalog-sha256:e6cd75c9b5a7c114",
   "models": {
     "claude-fable-5": {
       "input_usd_per_million": 10,
@@ -16,6 +16,12 @@
     "claude-haiku-4-5": {
       "input_usd_per_million": 1,
       "output_usd_per_million": 5,
+      "cache_read_multiplier": 0.1,
+      "cache_write_multiplier": 1.25
+    },
+    "claude-haiku-5-5": {
+      "input_usd_per_million": 0.1,
+      "output_usd_per_million": 0.5,
       "cache_read_multiplier": 0.1,
       "cache_write_multiplier": 1.25
     },
