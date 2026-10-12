@@ -13,6 +13,7 @@ import (
 	"weave-os/router/internal/translate/toolcheck"
 
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 var _ providers.OutputProgressArmer = (*ResponsesToAnthropicWriter)(nil)
@@ -922,6 +923,7 @@ func responsesErrorBody(errType, msg string) []byte {
 // event and returns its nested `response` object as raw JSON, or nil.
 func extractFinalResponseObject(sseBytes []byte) []byte {
 	var out []byte
+	var streamed []gjson.Result
 	rest := sseBytes
 	for {
 		event, n := splitBufferedResponsesEvent(rest)
@@ -934,13 +936,40 @@ func extractFinalResponseObject(sseBytes []byte) []byte {
 			continue
 		}
 		switch gjson.GetBytes(data, "type").String() {
+		case "response.output_item.done":
+			if item := gjson.GetBytes(data, "item"); item.IsObject() {
+				streamed = append(streamed, item)
+			}
 		case "response.completed", "response.incomplete", "response.failed":
 			if resp := gjson.GetBytes(data, "response"); resp.Exists() {
 				out = []byte(resp.Raw)
 			}
 		}
 	}
-	return out
+	return withStreamedOutput(out, streamed)
+}
+
+// withStreamedOutput fills an empty terminal output list from the stream's
+// output_item.done items: the ChatGPT Codex backend can close with
+// "output":[] after streaming a complete answer.
+func withStreamedOutput(final []byte, streamed []gjson.Result) []byte {
+	if final == nil || len(streamed) == 0 || len(gjson.GetBytes(final, "output").Array()) > 0 {
+		return final
+	}
+	raw := make([]byte, 0, len(final))
+	raw = append(raw, '[')
+	for i, item := range streamed {
+		if i > 0 {
+			raw = append(raw, ',')
+		}
+		raw = append(raw, item.Raw...)
+	}
+	raw = append(raw, ']')
+	patched, err := sjson.SetRawBytes(final, "output", raw)
+	if err != nil {
+		return final
+	}
+	return patched
 }
 
 // --- Anthropic SSE frame emitters (wire shapes mirror AnthropicSSETranslator) ---

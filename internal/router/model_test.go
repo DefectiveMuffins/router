@@ -24,6 +24,7 @@ func TestLookup_DateSuffixNormalization(t *testing.T) {
 		wantReasoning bool
 	}{
 		{"anthropic haiku dated", "claude-haiku-4-5-20251001", false, true, false},
+		{"anthropic haiku 5.5 adaptive", "claude-haiku-5-5", true, false, false},
 		{"anthropic opus dated", "claude-opus-4-7-20260301", true, false, false},
 		{"openai dated", "gpt-4o-2024-08-06", false, false, false},
 		{"openai luna pro registered", "gpt-5.6-luna-pro", false, false, true},

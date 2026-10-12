@@ -27,6 +27,7 @@ func TestLookup(t *testing.T) {
 		{name: "claude-sonnet-5", model: "claude-sonnet-5", wantInput: 3.00, wantOutput: 15.00},
 		{name: "claude-sonnet-4-5", model: "claude-sonnet-4-5", wantInput: 3.00, wantOutput: 15.00},
 		{name: "claude-haiku-4-5", model: "claude-haiku-4-5", wantInput: 1.00, wantOutput: 5.00},
+		{name: "claude-haiku-5-5", model: "claude-haiku-5-5", wantInput: 0.10, wantOutput: 0.50},
 
 		// ── OpenAI GPT-5.5 ─────────────────────────────────────
 		{name: "gpt-6-astra", model: "gpt-6-astra", wantInput: 10.00, wantOutput: 50.00},
