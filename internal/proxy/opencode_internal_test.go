@@ -253,7 +253,7 @@ func TestResolveForceModel_OpenCodeTails(t *testing.T) {
 		{"deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", providers.ProviderFireworks, true},
 		{"mimo-v2.6-pro", "xiaomi/mimo-v2.6-pro", providers.ProviderDeepInfra, true},
 		{"mimo-v2.6-flash", "xiaomi/mimo-v2.6-flash", providers.ProviderDeepInfra, true},
-		{"claude-haiku-5-5", "claude-haiku-5-5", providers.ProviderAnthropic, false},
+		{"claude-haiku-5-5", "claude-haiku-5-5", providers.ProviderAnthropic, true},
 		{catalog.ModelIDOpenCodeQwen38Flash.String(), catalog.ModelIDOpenCodeQwen38Flash.String(), providers.ProviderOpenCode, true},
 		{"qwen3.8-flash", catalog.ModelIDOpenCodeQwen38Flash.String(), providers.ProviderOpenCode, true},
 		{"qwen3.8-max", "qwen/qwen3.8-max", providers.ProviderFireworks, true},
