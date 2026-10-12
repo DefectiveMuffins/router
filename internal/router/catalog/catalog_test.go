@@ -42,6 +42,7 @@ func TestCatalog_BindingsReferenceCanonicalProviders(t *testing.T) {
 		providers.ProviderWaferAnthropic:   {},
 		providers.ProviderAnthropicGateway: {},
 		providers.ProviderOpenAIGateway:    {},
+		providers.ProviderOpenCode:         {},
 	}
 	for _, m := range Models {
 		for i, b := range m.Providers {
@@ -54,6 +55,13 @@ func TestCatalog_BindingsReferenceCanonicalProviders(t *testing.T) {
 func TestCatalog_BindingsHavePositivePrice(t *testing.T) {
 	for _, m := range Models {
 		for i, b := range m.Providers {
+			if b.Free {
+				assert.Zerof(t, b.Price.InputUSDPer1M, "%s binding %d (%s) is Free but has an input price", m.ID, i, b.Provider)
+				assert.Zerof(t, b.Price.OutputUSDPer1M, "%s binding %d (%s) is Free but has an output price", m.ID, i, b.Provider)
+				assert.Nilf(t, b.Price.LongContext, "%s binding %d (%s) is Free but has a long-context tier", m.ID, i, b.Provider)
+				assert.Zerof(t, b.FastPrice, "%s binding %d (%s) is Free but has a fast tier", m.ID, i, b.Provider)
+				continue
+			}
 			assert.Greaterf(t, b.Price.InputUSDPer1M, 0.0, "%s binding %d (%s) has non-positive InputUSDPer1M", m.ID, i, b.Provider)
 			assert.Greaterf(t, b.Price.OutputUSDPer1M, 0.0, "%s binding %d (%s) has non-positive OutputUSDPer1M", m.ID, i, b.Provider)
 			if b.Price.LongContext != nil {

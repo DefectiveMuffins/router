@@ -15,6 +15,7 @@ Composition root. Only place that constructs concrete adapters + wires them toge
   - `runSessionPinSweep` — TTL sweep loop
   - `resolveHardPinModel` / `resolveCompactionModel` / `resolveDefaultBaselineModel` / `resolveAvailableModels` — boot-time model resolution
   - `registerDeploymentKeyedProvider` — shared "resolve key → build client → log" registration for the providers whose gating collapses to that shape (Fireworks, Makora, Together, Bedrock, Google); OpenRouter and Anthropic/OpenAI stay bespoke
+  - `registerOpenCodeProvider` / `newOpenCodeClient` — OpenCode Go: deployment key only (no BYOK path), one `dispatch.SurfaceClient` over an OpenAI-wire and a Messages-wire adapter
   - small env parsers (e.g. `envVarHint`, `parseEnvInt`, `parseEnvFloat`, `parseEnvDurationMs`)
 - **No more heuristic-fallback router.** If cluster routing fails to boot, `main.go` panics. Misconfiguration must abort the process rather than silently degrade.
 - Validate deployment target overrides through `policy.Registry.ValidateDeployment` after provider/model configuration is resolved. A partial or catalog-incompatible explicit target is a startup error, not permission to substitute a default.

@@ -882,7 +882,7 @@ func (s *Service) runTurnLoop(
 	// Discounts covered models' cost term by the caller's observed subscription
 	// headroom. nil (feature off / no headroom yet) leaves scoring unchanged.
 	req.SubsidizedModelCostFactor = s.subsidyFactors(ctx, reqHeaders)
-	req.SubscriptionHeadroom = s.subscriptionHeadroom(ctx, reqHeaders)
+	req.SubscriptionHeadroom = append(s.subscriptionHeadroom(ctx, reqHeaders), s.openCodeLaneHeadroom(req.EnabledProviders)...)
 	res.subsidizedModelCostFactor = req.SubsidizedModelCostFactor
 	res.subscriptionHeadroom = req.SubscriptionHeadroom
 

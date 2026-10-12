@@ -920,3 +920,26 @@ func TestUsageExtractor_JSONFallbackObservesUsageOnTheWriteThatCompletesIt(t *te
 		input:   42, output: 17,
 	}, totalsOf(ext))
 }
+
+func TestUsageExtractorForFamily_ParsesAnthropicStreamUnderOpenAICompatProvider(t *testing.T) {
+	stream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"usage\":{\"input_tokens\":11,\"output_tokens\":0}}}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n"
+
+	ext := otel.NewUsageExtractorForFamily(httptest.NewRecorder(), providers.FamilyAnthropic)
+	_, err := ext.Write([]byte(stream))
+	require.NoError(t, err)
+	in, out := ext.Tokens()
+	assert.Equal(t, 11, in)
+	assert.Equal(t, 7, out)
+	stop, _, observed := ext.AnthropicResponse()
+	assert.True(t, observed)
+	assert.Equal(t, "end_turn", stop)
+
+	byProvider := otel.NewUsageExtractor(httptest.NewRecorder(), providers.ProviderOpenCode)
+	_, err = byProvider.Write([]byte(stream))
+	require.NoError(t, err)
+	in, _ = byProvider.Tokens()
+	assert.Zero(t, in, "the provider's own family misses the Messages stream's input usage")
+	_, _, observed = byProvider.AnthropicResponse()
+	assert.False(t, observed)
+}

@@ -104,8 +104,13 @@ func mergeExcludedModels(hard, automatic map[string]struct{}) map[string]struct{
 }
 
 // globalAutomaticExcludedModels returns the deployment-wide soft exclusion set
-// for this request, or nil when nothing is disabled.
+// for this request, or nil when nothing is disabled: the control plane's
+// disabled models plus any deployment-keyed plan model at its usage limit.
 func (s *Service) globalAutomaticExcludedModels(ctx context.Context) map[string]struct{} {
+	return mergeExcludedModels(s.controlPlaneAutomaticExcludedModels(ctx), s.openCodeLimitedModels())
+}
+
+func (s *Service) controlPlaneAutomaticExcludedModels(ctx context.Context) map[string]struct{} {
 	if s.globalAutomaticExclusions == nil {
 		return nil
 	}
@@ -120,12 +125,20 @@ func (s *Service) globalAutomaticExcludedModels(ctx context.Context) map[string]
 	return out
 }
 
+// openCodeUsageLimitExclusionReason explains a plan model withheld from
+// automatic routing until its usage limit resets.
+const openCodeUsageLimitExclusionReason = "plan usage limit reached"
+
 // globalAutomaticExclusionReason returns the operator's note for a disabled
 // model, so a dropped automatic pin says why in the logs.
 func (s *Service) globalAutomaticExclusionReason(ctx context.Context, model string) (string, bool) {
-	if s.globalAutomaticExclusions == nil {
-		return "", false
+	if s.globalAutomaticExclusions != nil {
+		if reason, disabled := s.globalAutomaticExclusions.snapshot(ctx)[model]; disabled {
+			return reason, true
+		}
 	}
-	reason, disabled := s.globalAutomaticExclusions.snapshot(ctx)[model]
-	return reason, disabled
+	if _, limited := s.openCodeLimitedModels()[model]; limited {
+		return openCodeUsageLimitExclusionReason, true
+	}
+	return "", false
 }

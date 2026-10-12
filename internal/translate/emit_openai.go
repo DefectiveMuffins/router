@@ -29,6 +29,30 @@ func resolveReasoningEffortFor(opts EmitOptions) string {
 	return opts.ForceReasoningEffort
 }
 
+// chatReasoningEffort is the reasoning_effort a chat/completions body carries:
+// the forced level, else, on a target that declares a menu, the caller's own
+// level, clamped onto that menu. A caller level off the effort ladder ("none")
+// is dropped rather than raised to the menu's top.
+func chatReasoningEffort(opts EmitOptions, callerLevel string) string {
+	forced := resolveReasoningEffortFor(opts)
+	if !opts.Capabilities.Supports(router.CapChatReasoningEffort) {
+		return forced
+	}
+	if forced == "" {
+		level := router.CanonicalizeEffort(callerLevel)
+		if _, ranked := reasoningLevelRank[level]; ranked {
+			forced = level
+		}
+	}
+	return ClampReasoningLevel(opts.Capabilities, forced)
+}
+
+func writesChatReasoningEffort(opts EmitOptions, hasTools bool) bool {
+	caps := opts.Capabilities
+	return (caps.Supports(router.CapReasoning) || caps.Supports(router.CapChatReasoningEffort)) &&
+		reasoningEffortAcceptedOnChatCompletions(opts, hasTools)
+}
+
 // reasoningEffortAcceptedOnChatCompletions reports whether the target accepts
 // reasoning_effort on /v1/chat/completions. gpt-5.x rejects it (routed through
 // Responses API); other CapReasoning models (OpenRouter OSS) accept it freely.
@@ -157,6 +181,8 @@ func applySessionAffinity(body []byte, headers http.Header, opts EmitOptions) ([
 			headers.Set("x-session-id", opts.SessionAffinity)
 		}
 		return body, nil
+	case providers.ProviderOpenCode:
+		return stripCallerIdentifiers(body)
 	case providers.ProviderOpenAI, providers.ProviderOpenAIGateway:
 		if opts.TargetProvider == providers.ProviderOpenAIGateway &&
 			strings.HasPrefix(opts.TargetModel, "grok") && opts.SessionAffinity != "" {
@@ -209,6 +235,28 @@ func applySessionAffinity(body []byte, headers http.Header, opts EmitOptions) ([
 	return body, nil
 }
 
+// callerIdentifierFields are chat body fields a caller fills with its own
+// end-user, account or tracking identifiers.
+var callerIdentifierFields = []string{"user", "safety_identifier", "prompt_cache_key", "metadata"}
+
+// stripCallerIdentifiers drops callerIdentifierFields for an opencode target:
+// a third party the router chose, which only the session digest header may
+// identify the caller to.
+func stripCallerIdentifiers(body []byte) ([]byte, error) {
+	out := body
+	for _, key := range callerIdentifierFields {
+		if !gjson.GetBytes(out, key).Exists() {
+			continue
+		}
+		var err error
+		out, err = sjson.DeleteBytes(out, key)
+		if err != nil {
+			return nil, fmt.Errorf("delete %s: %w", key, err)
+		}
+	}
+	return out, nil
+}
+
 // stablePromptCacheKey hashes the request's cacheable prefix (system message
 // + tool definitions) into a deterministic prompt_cache_key, used as a
 // fallback when no session key is available. Returns "" when there's no
@@ -246,7 +294,8 @@ func (e *RequestEnvelope) buildOpenAIFromOpenAI(opts EmitOptions) ([]byte, error
 		return nil, err
 	}
 	// Write reasoning_effort for CapReasoning targets that accept it on chat/completions.
-	if forced := resolveReasoningEffortFor(opts); forced != "" && opts.Capabilities.Supports(router.CapReasoning) && reasoningEffortAcceptedOnChatCompletions(opts, hasNonEmptyTools(body)) {
+	callerLevel := gjson.GetBytes(e.body, "reasoning_effort").String()
+	if forced := chatReasoningEffort(opts, callerLevel); forced != "" && writesChatReasoningEffort(opts, hasNonEmptyTools(body)) {
 		body, err = sjson.SetBytes(body, "reasoning_effort", forced)
 		if err != nil {
 			return nil, fmt.Errorf("set reasoning_effort: %w", err)
@@ -371,7 +420,7 @@ func (e *RequestEnvelope) buildOpenAIFromAnthropic(opts EmitOptions) ([]byte, pr
 	writeOpenAIMaxTokensFromAnthropic(jw, body, opts)
 
 	// Write reasoning_effort for CapReasoning targets that accept it on chat/completions.
-	if forced := resolveReasoningEffortFor(opts); forced != "" && opts.Capabilities.Supports(router.CapReasoning) && reasoningEffortAcceptedOnChatCompletions(opts, hasNonEmptyTools(body)) {
+	if forced := chatReasoningEffort(opts, ""); forced != "" && writesChatReasoningEffort(opts, hasNonEmptyTools(body)) {
 		jw.Key("reasoning_effort")
 		jw.Str(forced)
 	}

@@ -53,6 +53,8 @@ Claude Code keep using the user's logged-in plan.
 | `OPENAI_GATEWAY_TOKEN`       | *(none)*                                           | Token for that gateway, sent as `Authorization: Bearer`. Only used when `OPENAI_GATEWAY_BASE_URL` is also set. |
 | `WAFER_API_KEY`   | *(none)*                                                  | Enables Wafer Serverless (both its OpenAI-compatible `wafer` and Anthropic-compatible `wafer_anthropic` surfaces; one key covers both). |
 | `WAFER_BASE_URL`  | `https://pass.wafer.ai/v1`                                | Override for the Wafer OpenAI-compatible endpoint (`wafer_anthropic` uses the fixed `/v1/messages` endpoint). |
+| `OPENCODE_API_KEY` | *(none)*                                                 | Enables OpenCode Go (provider `opencode`): one key for its chat/completions, Responses and Messages surfaces. |
+| `OPENCODE_BASE_URL` | `https://opencode.ai/zen/go/v1`                         | Override for the OpenCode Go base (`/messages` is derived by dropping the trailing `/v1`). |
 
 **Anthropic-compatible gateway.** Some enterprises front Claude with their own
 gateway that speaks the Anthropic Messages spec but authenticates with a bearer
@@ -144,6 +146,21 @@ curl -sS -b jar -X POST https://<router>/admin/v1/provider-keys \
 The server receives only that key; subscription bearers and other provider
 credentials are never sent to it. `LOCAL_OPENAI_API_KEY` is reserved and
 unused: a local server without aliases has nothing to serve.
+
+**OpenCode Go.** A flat-fee coding plan whose one key serves its models on
+three wire surfaces. Its catalog ids are `opencode/<model>`, and each row names
+the surface it is served on (chat/completions, Responses or Messages), so a
+row is never probed on another surface. Every request carries
+`User-Agent: weave-router/1.0` and an `x-opencode-session` header holding a
+digest of the router's session key; on the Messages surface the caller's
+`metadata.user_id` is replaced by that digest (or dropped without one), and on
+chat/completions the caller's `user`, `safety_identifier`, `prompt_cache_key`
+and `metadata` are dropped. Only the deployment key authenticates it: caller
+credentials are never forwarded, and there is no BYOK row for it. A 429
+`GoUsageLimitError` rules that model out of automatic routing until its reset
+(`Retry-After`, else one hour); an explicit `/force-model` still reaches it.
+The limit is also reported to policy sidecars as a scoped window on the
+`opencode` subscription-headroom lane, and it is not retried on the same model.
 
 **BYOK (per-installation keys).** Instead of (or in addition to) the env vars
 above, each installation can supply its own provider keys via the dashboard.

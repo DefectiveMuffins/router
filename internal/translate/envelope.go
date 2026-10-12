@@ -1466,6 +1466,20 @@ var modelMaxOutputTokens = map[string]int{
 	"z-ai/glm-5.3-flash":               131072,
 	"google/gemini-3.7-flash":          65536,
 	"google/gemini-3.8-flash":          65536,
+
+	catalog.ModelIDOpenCodeGrok47.String():               131072,
+	catalog.ModelIDOpenCodeGPT6Luna.String():             128000,
+	catalog.ModelIDOpenCodeClaudeHaiku55.String():        64000,
+	catalog.ModelIDOpenCodeGLM53.String():                131072,
+	catalog.ModelIDOpenCodeGLM53Flash.String():           131072,
+	catalog.ModelIDOpenCodeKimiK3.String():               131072,
+	catalog.ModelIDOpenCodeStep5PreviewFree.String():     32768,
+	catalog.ModelIDOpenCodeLongCat25PreviewFree.String(): 32768,
+	catalog.ModelIDOpenCodeMiMoV26Pro.String():           65536,
+	catalog.ModelIDOpenCodeMiMoV26Flash.String():         65536,
+	catalog.ModelIDOpenCodeQwen38Max.String():            64000,
+	catalog.ModelIDOpenCodeQwen38Flash.String():          32768,
+	catalog.ModelIDOpenCodeDeepSeekV41Flash.String():     131072,
 }
 
 const defaultMaxOutputTokenCap = 8192

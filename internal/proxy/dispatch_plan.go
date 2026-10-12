@@ -126,9 +126,18 @@ func (s *Service) dispatchPlanned(ctx context.Context, in failoverInputs, plan i
 			// paths, so the only source left is the deployment env key.
 			return resolveAndInjectCredentials(ctx, attempt.Target.Provider, in.initialDecision.Model, http.Header{}), nil
 		},
-		Terminal: func(_ dispatch.Attempt, err error) bool {
+		// A plan usage limit is not a transient throttle: re-sending to the same
+		// binding re-buys the same 429. Sibling-model rescue still runs.
+		Terminal: func(attempt dispatch.Attempt, err error) bool {
 			var abort dispatchAbort
-			return errors.As(err, &abort)
+			if errors.As(err, &abort) {
+				return true
+			}
+			if attempt.Target.Provider != providers.ProviderOpenCode {
+				return false
+			}
+			_, limited := openCodeUsageLimitReset(err, s.clockNow())
+			return limited
 		},
 		// A managed-subscription turn never fails over to a paid binding; a
 		// transient error on it still gets the same-binding retries.
@@ -159,6 +168,7 @@ func (s *Service) dispatchPlanned(ctx context.Context, in failoverInputs, plan i
 			attemptErr := in.attempt(credentialCtx, decision, guarded)
 			if !committed(in.buf) {
 				s.recordSubscriptionModelRejection(credentialCtx, decision.Provider, decision.Model, attemptErr)
+				s.recordOpenCodeUsageLimit(credentialCtx, attempt.Target, attemptErr)
 			}
 			lease.Release()
 			if attemptErr == nil {

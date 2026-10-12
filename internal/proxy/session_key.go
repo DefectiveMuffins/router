@@ -91,6 +91,7 @@ func bindRequestLogger(
 	if cs != "" {
 		log = log.With("client_session_id", cs)
 	}
+	ctx = requestcontext.WithSessionAffinity(ctx, sessionAffinityHint(key))
 	// Promote rather than merely attach: the access log and any FromGin caller
 	// read the gin-bound logger, so session_key would otherwise never reach
 	// the one line guaranteed to exist per request.

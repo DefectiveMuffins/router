@@ -1348,7 +1348,7 @@ func modelStripsAnthropicSignatures(model string) bool {
 	if !ok {
 		return false
 	}
-	return providers.FamilyFor(m.PrimaryProvider()) != providers.FamilyAnthropic
+	return catalog.TranslationFamilyFor(m.PrimaryProvider(), m.ID) != providers.FamilyAnthropic
 }
 
 // excludeContextOverflowModels returns a copy of excluded augmented with every
@@ -2154,6 +2154,12 @@ func (s *Service) WithContentCapture(mode ContentCaptureMode, maxBytes int, reda
 	return s
 }
 
+// effortPolicyName strips a multi-surface provider's namespace so per-model
+// effort defaults key off the upstream model id.
+func effortPolicyName(model string) string {
+	return strings.TrimPrefix(model, providers.ProviderOpenCode+"/")
+}
+
 // forcedReasoningEffort implements escalate-on-failure effort policy, returning
 // the EmitOptions.ForceReasoningEffort override ("" = no override):
 //
@@ -2165,6 +2171,7 @@ func (s *Service) WithContentCapture(mode ContentCaptureMode, maxBytes int, reda
 //     "high" default, a ~15 s fixed TTFT stall on every pinned turn.
 //   - everything else: "" — left to its own path.
 func forcedReasoningEffort(model string, escalate bool) string {
+	model = effortPolicyName(model)
 	// Unconditional: omitting effort falls to xAI's non-disableable "high" default
 	// (~15 s TTFT stall) — a defect to correct, not an escalation to tune.
 	if strings.HasPrefix(model, "grok-") {
@@ -3154,7 +3161,7 @@ func (s *Service) anthropicNativeAttempt(
 		}
 		proxyWriter := attemptSink
 		if s.usageRequired() {
-			ex := otel.NewUsageExtractor(attemptSink, d.Provider)
+			ex := otel.NewUsageExtractorForFamily(attemptSink, providers.FamilyAnthropic)
 			proxyWriter = ex
 			setExtractor(ex)
 		}
@@ -4209,7 +4216,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 	// providers route automatically; a closure so in-turn model failover can
 	// re-emit for a candidate in a different family.
 	buildAttempt := func(target router.Decision, targetOpts translate.EmitOptions, targetMarker string) (dispatchAttempt, error) {
-		switch providers.FamilyFor(target.Provider) {
+		switch catalog.TranslationFamilyFor(target.Provider, target.Model) {
 		case providers.FamilyAnthropic:
 			prep, emitErr := env.PrepareAnthropic(r.Header, targetOpts)
 			if emitErr != nil {
@@ -4332,20 +4339,24 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 				// Direct OpenAI serves every expressible turn on Responses;
 				// gateways only the reasoning tool turn chat/completions rejects.
 				gatewayKey := gatewayResponsesKey(actx, d.Provider)
+				surface := catalog.SurfaceFor(d.Provider, d.Model)
+				responsesOnly := surface == providers.SurfaceResponses
 				useResponses := translate.UseOpenAIResponsesAPI(translate.ResponsesRoute{
 					Provider:       d.Provider,
 					Capabilities:   targetOpts.Capabilities,
 					HasTools:       feats.HasTools,
 					ChatOnlyParams: env.RequiresChatCompletionsParams(targetOpts.Capabilities),
 					Broad:          s.ResolveOpenAIResponsesBroad(actx),
+					Surface:        surface,
 				}) && !s.gatewayLacksResponses(gatewayKey)
 				stripPCK := s.gatewayRejectsPromptCacheKey(gatewayKey)
 				rawErr, finalize := dispatchOpenAICompat(actx, d, p, useResponses, stripPCK)
 				// A gateway with no usable Responses surface answers 404, or 4xx
 				// prose saying the API is off for this account. Re-emit onto
 				// chat/completions once while pre-commit, and remember the answer
-				// so the next turn skips the probe.
-				if rawErr != nil && useResponses && !committed(preludeBuf) &&
+				// so the next turn skips the probe. A Responses-only binding has
+				// no chat surface to fall back to.
+				if rawErr != nil && useResponses && !responsesOnly && !committed(preludeBuf) &&
 					providers.IsUpstreamResponsesUnsupported(rawErr) {
 					s.rememberGatewayLacksResponses(gatewayKey)
 					log.Warn("Gateway rejected the Responses API; retrying on chat/completions",
@@ -5119,8 +5130,8 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 			LastToolUseName:       terminalToolUse.Name,
 			LastToolUseInputBytes: int32PtrIfKnown(int32(terminalToolUse.InputBytes), endedOnToolUse),
 			ToolErrorCounts:       toolErrorCountsJSON(toolErrorTally),
-			AutonomyAppendFired:   boolPtrOrNil(autonomyAppendFired(opts, finalProvider)),
-			WorkspaceAppendFired:  boolPtrOrNil(workspaceAppendFired(opts, finalProvider)),
+			AutonomyAppendFired:   boolPtrOrNil(autonomyAppendFired(opts, finalProvider, decision.Model)),
+			WorkspaceAppendFired:  boolPtrOrNil(workspaceAppendFired(opts, finalProvider, decision.Model)),
 			FailoverUsed:          boolPtrTrue(failoverUsed),
 			DegenerateShadow:      boolPtrOrNil(degShadow),
 			// (session_key, role) is the offline join key to spiral_shadow_events
@@ -6109,6 +6120,9 @@ func (s *Service) excludeCodexOAuthOnlyModels(
 // the client's inbound key to a different upstream provider. The deployment
 // env key is the correct fallback there.
 func resolveAndInjectCredentials(ctx context.Context, provider, model string, headers http.Header) context.Context {
+	if provider == providers.ProviderOpenCode {
+		return clearCredentials(ctx)
+	}
 	routerKeyed := installationIDFromContext(ctx) != (uuid.UUID{})
 	// Skip subscription OAuth (fall through to BYOK / deployment key):
 	// exhausted (Anthropic-only, avoid re-429), toggle off (provider-wide), or
@@ -6908,6 +6922,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	}
 	effortServed := s.resolveEffort(ctx, decision, opts.Capabilities, routeRes.EscalateEffort)
 	effortServed.apply(&opts)
+	effortServed = effortServed.onChatIngress(decision)
 
 	// A caller whose ChatGPT (Codex) plan window has bound can't serve another
 	// turn on it — the backend rejects until reset. Suppress the spent token so
@@ -7146,7 +7161,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 				responsesMarker = targetMarker
 			}
 		}
-		switch providers.FamilyFor(target.Provider) {
+		switch catalog.TranslationFamilyFor(target.Provider, target.Model) {
 		case providers.FamilyOpenAICompat:
 			// Prep rebuilt per attempt: targetIsOpenRouter(opts) gates four
 			// OpenRouter-only body fields that Fireworks/Bedrock/Makora/Together
@@ -7300,6 +7315,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 			}
 			return func(actx context.Context, d router.Decision, p providers.Client) error {
 				surface := surfaceChat
+				responsesOnly := catalog.SurfaceFor(d.Provider, d.Model) == providers.SurfaceResponses
 				if d.Provider == providers.ProviderOpenAI {
 					switch {
 					case responsesPassthrough:
@@ -7307,6 +7323,8 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 					case translateToResponses:
 						surface = surfaceResponsesTranslated
 					}
+				} else if responsesOnly {
+					surface = surfaceResponsesTranslated
 				}
 				gatewayKey := gatewayResponsesKey(actx, d.Provider)
 				stripPCK := s.gatewayRejectsPromptCacheKey(gatewayKey)
@@ -7328,7 +7346,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 				}
 				// Retried once pre-commit on chat/completions; memoized for later turns.
 				// A native attempt also needs promotedToResponses — a Codex passthrough has none.
-				if err == nil || surface == surfaceChat ||
+				if err == nil || surface == surfaceChat || responsesOnly ||
 					committed(preludeBuf) || !providers.IsUpstreamResponsesUnsupported(err) {
 					return err
 				}
@@ -7711,6 +7729,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 		retryOpts.ModelSwitched = true
 		retryEffort := s.resolveEffort(ctx, cyberRetryTarget, retryOpts.Capabilities, routeRes.EscalateEffort)
 		retryEffort.apply(&retryOpts)
+		retryEffort = retryEffort.onChatIngress(cyberRetryTarget)
 		retryCtx := resolveAndInjectCredentials(ctx, cyberRetryTarget.Provider, cyberRetryTarget.Model, r.Header)
 		retryOpts.FastMode = fastModeForAttempt(retryCtx, cyberRetryTarget.Model, cyberRetryTarget.Provider)
 		retryBindings := s.resolveBindingsForDispatch(retryCtx, cyberRetryTarget)
@@ -7793,6 +7812,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 			siblingOpts.ModelSwitched = true
 			siblingEffort := s.resolveEffort(ctx, siblingDecision, siblingOpts.Capabilities, routeRes.EscalateEffort)
 			siblingEffort.apply(&siblingOpts)
+			siblingEffort = siblingEffort.onChatIngress(siblingDecision)
 			siblingCtx := s.resolveCredentials(ctx, siblingDecision.Provider, siblingDecision.Model, r.Header)
 			siblingOpts.FastMode = fastModeForAttempt(siblingCtx, siblingDecision.Model, siblingDecision.Provider)
 			siblingBindings := s.resolveBindingsForDispatch(siblingCtx, siblingDecision)

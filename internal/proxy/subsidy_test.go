@@ -250,6 +250,30 @@ func TestSubscriptionHeadroom_FlagsExhaustedWindowUntilReset(t *testing.T) {
 		"a spent window is no longer exhausted once its reset has passed")
 }
 
+// A Claude scope whose own reset has passed has refilled, so the sidecar, which
+// honours a rejected scope whatever its reset_at, must not see it.
+func TestSubscriptionHeadroom_DropsClaudeScopeWhoseResetPassed(t *testing.T) {
+	now := time.Date(2026, 10, 2, 19, 0, 0, 0, time.UTC)
+	snap := usage.Snapshot{
+		Secondary: usage.Window{UsedPercent: 0.3, WindowMinutes: 10080},
+		Scoped: map[string]usage.ScopedWindow{
+			usage.ScopeOpus:   {Window: usage.Window{UsedPercent: 1, WindowMinutes: 10080, ResetAt: now.Add(-time.Minute)}, Status: "rejected"},
+			usage.ScopeSonnet: {Window: usage.Window{UsedPercent: 1, WindowMinutes: 10080, ResetAt: now.Add(time.Hour)}, Status: "rejected"},
+			usage.ScopeFable:  {Window: usage.Window{UsedPercent: 0.84, WindowMinutes: 10080}, Status: "allowed_warning"},
+		},
+		ObservedAt: now,
+	}
+
+	lane := headroomFromSnapshot(providers.ProviderAnthropic, snap, now)
+
+	var scopes []string
+	for _, w := range lane.Windows {
+		scopes = append(scopes, w.Scope)
+	}
+	assert.Equal(t, []string{"", usage.ScopeFable, usage.ScopeSonnet}, scopes,
+		"the refilled Opus scope is dropped; a scope with no reset and one still in force are kept")
+}
+
 func TestSubscriptionHeadroom_ReportsScopedLimitsWithoutExhaustingLane(t *testing.T) {
 	now := time.Date(2026, 10, 2, 19, 0, 0, 0, time.UTC)
 	snap := usage.Snapshot{

@@ -101,6 +101,28 @@ func TestResolveEffort_SourcesAndClamping(t *testing.T) {
 			wantSource:   effortSourceArm,
 		},
 		{
+			name:         "namespaced grok row takes the grok default",
+			model:        "opencode/grok-4.7",
+			wantSelected: "low",
+			wantSent:     "low",
+			wantSource:   effortSourceModelPolicy,
+		},
+		{
+			name:         "chat reasoning_effort row clamps the arm onto its menu",
+			model:        "opencode/glm-5.3",
+			armEffort:    "medium",
+			wantSelected: "medium",
+			wantSent:     "low",
+			wantSource:   effortSourceArm,
+			wantMismatch: true,
+		},
+		{
+			name:         "row without an effort knob sends none",
+			model:        "opencode/qwen3.8-max",
+			armEffort:    "xhigh",
+			wantMismatch: true,
+		},
+		{
 			name:         "max on an xhigh-ceiling menu serves xhigh",
 			model:        "gpt-5.6-luna",
 			armEffort:    "max",

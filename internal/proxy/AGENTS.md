@@ -55,6 +55,7 @@ collapse them.
 | `allowed_models` | org (installation) | fail-closed | desugared into `ExcludedModels` by `excludedModelsForRequest` |
 | `excluded_models` | org (installation) | fail-closed | scorer + policy resolver |
 | `global_automatic_routing_exclusions` | deployment | fail-open (soft) | `AutomaticExcludedModels`: scorer, policy resolver, and every automatic-pin gate |
+| deployment-keyed plan usage limit (`opencode`) | deployment | fail-open (soft) | same set, via `globalAutomaticExcludedModels`, until the recorded reset |
 | `cluster_model_lists` | API key (org default) | fail-open | `policy.ApplyClusterArmOverrides` |
 | `model_router_user_cluster_model_lists` | router user | fail-open | same, after `mergeClusterOverrides` |
 | subscription plan-aware routing | router user | fail-open on unknown/all-exhausted state | request-scoped exclusions from `withPlanAwareSubscriptionModels` |
@@ -242,6 +243,12 @@ tool turn on chat/completions no matter what we send). A gateway that answers
 404/"API disabled" is retried once on chat/completions while pre-commit and
 memoized per effective base URL (`gatewayLacksResponses`), so the next turn
 skips the probe.
+
+**A binding whose `Surface` is Responses always takes Responses.** A
+multi-surface provider (`opencode`) names each row's wire in the catalog, so
+both ingresses send that row to `/responses` whatever the turn's shape, and an
+unsupported-endpoint answer is surfaced rather than retried on
+chat/completions: that row has no chat surface to fall back to.
 
 Both rules sit behind `ROUTER_OPENAI_RESPONSES_BROAD` (default on, per-org
 overridable via `flags.KeyOpenAIResponsesBroad`). Turning it off restores the

@@ -7,7 +7,7 @@ export interface ModelPricing {
 	cacheReadMultiplier: number;
 }
 
-export const PRICING_VERSION = "catalog-sha256:c4319170e42a2666";
+export const PRICING_VERSION = "catalog-sha256:e36eb56b5419ab88";
 
 export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = Object.freeze({
 	"claude-fable-5": { inputUsdPerMillion: 10, outputUsdPerMillion: 50, cacheReadMultiplier: 0.1 },
@@ -82,6 +82,19 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = Object.free
 	"moonshotai/kimi-k2.7": { inputUsdPerMillion: 0.95, outputUsdPerMillion: 4, cacheReadMultiplier: 0.2 },
 	"moonshotai/kimi-k3": { inputUsdPerMillion: 3, outputUsdPerMillion: 15, cacheReadMultiplier: 0.1 },
 	"muse-spark-1.3": { inputUsdPerMillion: 1.25, outputUsdPerMillion: 4.25, cacheReadMultiplier: 0.12 },
+	"opencode/claude-haiku-5-5": { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.5, cacheReadMultiplier: 0.1 },
+	"opencode/deepseek-v4.1-flash": { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6, cacheReadMultiplier: 0.04666666666666667 },
+	"opencode/glm-5.3": { inputUsdPerMillion: 1.4, outputUsdPerMillion: 4.4, cacheReadMultiplier: 0.18571428571428572 },
+	"opencode/glm-5.3-flash": { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.5, cacheReadMultiplier: 0.2 },
+	"opencode/gpt-6-luna": { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.5, cacheReadMultiplier: 0.1 },
+	"opencode/grok-4.7": { inputUsdPerMillion: 2, outputUsdPerMillion: 6, cacheReadMultiplier: 0.25 },
+	"opencode/kimi-k3": { inputUsdPerMillion: 3, outputUsdPerMillion: 15, cacheReadMultiplier: 0.1 },
+	"opencode/longcat-2.5-preview-free": { inputUsdPerMillion: 0, outputUsdPerMillion: 0, cacheReadMultiplier: 0.5 },
+	"opencode/mimo-v2.6-flash": { inputUsdPerMillion: 0.14, outputUsdPerMillion: 0.28, cacheReadMultiplier: 0.02 },
+	"opencode/mimo-v2.6-pro": { inputUsdPerMillion: 0.435, outputUsdPerMillion: 0.87, cacheReadMultiplier: 0.00827586 },
+	"opencode/qwen3.8-flash": { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.47, cacheReadMultiplier: 0.5 },
+	"opencode/qwen3.8-max": { inputUsdPerMillion: 2, outputUsdPerMillion: 6, cacheReadMultiplier: 0.125 },
+	"opencode/step-5-preview-free": { inputUsdPerMillion: 0, outputUsdPerMillion: 0, cacheReadMultiplier: 0.5 },
 	"qwen/qwen3-235b-a22b-2507": { inputUsdPerMillion: 0.2266, outputUsdPerMillion: 0.9064, cacheReadMultiplier: 0.5 },
 	"qwen/qwen3-30b-a3b-instruct-2507": { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6, cacheReadMultiplier: 0.1684 },
 	"qwen/qwen3-coder": { inputUsdPerMillion: 0.9, outputUsdPerMillion: 2.7, cacheReadMultiplier: 0.1684 },

@@ -23,6 +23,10 @@ const (
 	// CapAutoToolChoiceOnly marks models that 400 on a forced tool_choice
 	// ({"type":"any"} / {"type":"tool"}); emit downgrades those to auto.
 	CapAutoToolChoiceOnly ModelCapability = "auto_tool_choice_only"
+	// CapChatReasoningEffort marks a chat/completions target that accepts
+	// reasoning_effort while keeping plain chat parameters (max_tokens, stop,
+	// penalties), unlike CapReasoning targets.
+	CapChatReasoningEffort ModelCapability = "chat_reasoning_effort"
 )
 
 // ModelSpec describes what a model supports. Zero value is safe: provider
@@ -154,6 +158,14 @@ var (
 	museSpark = NewSpecWithReasoning(ReasoningCapabilities{Levels: []string{"low", "medium", "high", "xhigh"}, SupportsBudget: true, AlwaysOn: true}, CapReasoning, CapXhighEffort)
 )
 
+var (
+	openCodeAdaptiveAutoTools = NewSpecWithReasoning(ReasoningCapabilities{Levels: []string{"low", "medium", "high", "max", "xhigh"}, AlwaysOn: true}, CapAdaptiveThinking, CapXhighEffort, CapAutoToolChoiceOnly)
+	openCodeLowHighMax        = NewSpecWithReasoning(ReasoningCapabilities{Levels: []string{"low", "high", "max"}}, CapChatReasoningEffort)
+	openCodeMaxOnly           = NewSpecWithReasoning(ReasoningCapabilities{Levels: []string{"max"}, AlwaysOn: true}, CapChatReasoningEffort)
+	openCodeLowMediumHigh     = NewSpecWithReasoning(ReasoningCapabilities{Levels: []string{"low", "medium", "high"}}, CapChatReasoningEffort)
+	openCodeMessagesThinking  = NewSpec(CapExtendedThinking)
+)
+
 // Gemini's OpenAI-compatible endpoint does not honor reasoning_effort or
 // Anthropic thinking fields, so the base spec strips both.
 var googleBase = NewSpecWithReasoning(ReasoningCapabilities{Levels: []string{"low", "medium", "high"}, SupportsBudget: true})
@@ -270,6 +282,17 @@ var registry = map[string]ModelSpec{
 	"qwen/qwen3-coder-next":            openAICompatBase,
 	"qwen/qwen3-next-80b-a3b-instruct": openAICompatBase,
 	"qwen/qwen3.8-max":                 openAICompatBase,
+
+	"opencode/grok-4.7":            grok47,
+	"opencode/gpt-6-luna":          openai6,
+	"opencode/claude-haiku-5-5":    openCodeAdaptiveAutoTools,
+	"opencode/glm-5.3":             openCodeLowHighMax,
+	"opencode/glm-5.3-flash":       openCodeLowHighMax,
+	"opencode/kimi-k3":             openCodeMaxOnly,
+	"opencode/step-5-preview-free": openCodeLowMediumHigh,
+	"opencode/deepseek-v4.1-flash": openCodeLowHighMax,
+	"opencode/qwen3.8-max":         openCodeMessagesThinking,
+	"opencode/qwen3.8-flash":       openCodeMessagesThinking,
 }
 
 // ValidateCatalogReasoningCapabilities validates every declared model at

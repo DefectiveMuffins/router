@@ -193,6 +193,15 @@ is 1 when rejected and 0, meaning unknown, otherwise.
 {"name": "secondary", "scope": "fable", "status": "allowed_warning", "used_fraction": 0.84, "window_minutes": 10080, "reset_at": "2026-10-09T10:00:00Z"}
 ```
 
+The `opencode` lane is a deployment-keyed flat-fee plan rather than a caller's
+subscription. It carries only scoped windows keyed by the upstream model id,
+each with `status` `rejected` and `used_fraction` 1, recorded when the plan
+refuses that model with its usage-limit 429. A window is dropped once its
+`reset_at` passes, and the lane is never `exhausted`: one model's limit leaves
+the plan's other models eligible. The router already withholds a limited model
+from automatic selection (`AutomaticExcludedModels`) before the policy runs, so
+the lane is information, not the enforcement.
+
 Requests may also carry `requested_effort`: the explicit reasoning level the
 client asked for in the request body (`low`, `medium`, `high`, `xhigh` or
 `max`), so a policy can avoid choosing below it. It is omitted when the client

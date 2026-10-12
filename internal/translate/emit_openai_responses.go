@@ -147,6 +147,9 @@ type ResponsesRoute struct {
 	// Broad is the rollout flag (ROUTER_OPENAI_RESPONSES_BROAD). Off, only
 	// the reasoning tool turn chat/completions outright rejects is promoted.
 	Broad bool
+	// Surface is the catalog binding's wire surface; a binding that names one
+	// decides the endpoint outright.
+	Surface providers.WireSurface
 }
 
 // UseOpenAIResponsesAPI reports whether a dispatch should use POST
@@ -156,6 +159,12 @@ type ResponsesRoute struct {
 // Gateways keep the narrow rule — reasoning tool turns only — because most
 // mount no Responses surface; one without it is downgraded by the caller.
 func UseOpenAIResponsesAPI(rt ResponsesRoute) bool {
+	switch rt.Surface {
+	case providers.SurfaceResponses:
+		return true
+	case providers.SurfaceChatCompletions, providers.SurfaceMessages:
+		return false
+	}
 	narrow := rt.Capabilities.Supports(router.CapReasoning) && rt.HasTools
 	switch rt.Provider {
 	case providers.ProviderOpenAI:

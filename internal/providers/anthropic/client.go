@@ -91,6 +91,13 @@ func (c *Client) WithModelIDMap(modelIDMap map[string]string) *Client {
 	return c
 }
 
+// WithSessionHeader returns c with the request's session-affinity token sent
+// under name on every upstream call, replacing any inbound value.
+func (c *Client) WithSessionHeader(name string) *Client {
+	c.sessionHeader = name
+	return c
+}
+
 // rewriteModelField rewrites the body's top-level "model" via modelIDMap
 // (mirrors openaicompat's rewriteModelField). Nil map or missing key = no-op.
 func rewriteModelField(body []byte, modelIDMap map[string]string) []byte {
@@ -143,6 +150,9 @@ type Client struct {
 	// versionMemo resolves gateway base URLs that already carry the "/v1"
 	// segment this adapter appends.
 	versionMemo providers.GatewayVersionMemo
+	// sessionHeader names the header that carries the request's
+	// session-affinity token upstream; empty sends none.
+	sessionHeader string
 }
 
 func NewClient(apiKey, baseURL string, opts ...Option) *Client {
@@ -381,6 +391,7 @@ func (c *Client) proxyTo(ctx context.Context, cancel context.CancelCauseFunc, ur
 	requestcontext.ApplyWIFTokenType(ctx, upstream)
 	requestcontext.ApplyIdentityHeader(ctx, upstream)
 	requestcontext.ApplyForwardedClientHeaders(ctx, upstream, r.Header)
+	requestcontext.ApplySessionAffinityHeader(ctx, upstream, c.sessionHeader)
 	if v := r.Header.Get("accept"); v != "" {
 		upstream.Header.Set("accept", v)
 	}

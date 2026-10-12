@@ -34,7 +34,8 @@ The cluster scorer resolves each routable model's binding at boot via `ResolveBi
 - **No I/O.** Pure data + accessors. Adding HTTP, DB, or FS calls = layering violation.
 - **`Models` is the only writer.** `ByID` / `PrimaryPriceFor` / `TierFor` are read-only views over it.
 - **Every binding's `Provider` is one of the `providers.Provider*` constants.** Tested in `catalog_test.go`.
-- **Every binding has positive input + output prices.** Tested.
+- **Every binding has positive input + output prices**, except a binding marked `Free` (a provider's free preview), which has zero prices and no long-context or fast price. Tested.
+- **`ProviderBinding.Surface` zero value means the provider's own family.** A non-zero surface names the wire the binding is served on; `SurfaceFor` and `TranslationFamilyFor` read it, and dispatch never probes another surface for that binding.
 - **No duplicate `Model.ID`s.** Tested.
 - **`Providers` is never empty.** Tested.
 

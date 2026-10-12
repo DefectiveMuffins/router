@@ -40,6 +40,8 @@ var expectedSessionAffinityMechanism = map[string]sessionAffinityMechanism{
 	// A customer endpoint may reject unknown headers, so the hint rides the spec
 	// prompt_cache_key body field — a gateway that forwards the body forwards the hint.
 	providers.ProviderOpenAIGateway: mechanismPromptCacheKeyBody,
+	// Sent by the adapter as its own session header instead.
+	providers.ProviderOpenCode: mechanismNone,
 }
 
 // defaultMechanismProviders are OpenAI-compat providers intentionally left

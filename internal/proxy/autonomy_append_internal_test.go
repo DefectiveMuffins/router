@@ -10,6 +10,7 @@ import (
 	"weave-os/router/internal/flags"
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/requestcontext"
+	"weave-os/router/internal/router/catalog"
 	"weave-os/router/internal/router/turntype"
 	"weave-os/router/internal/translate"
 )
@@ -102,9 +103,19 @@ func TestAutonomySystemAppendApplies_IdempotentAndSkipsSearchSubTurn(t *testing.
 
 func TestAutonomyAppendFired_NotRecordedForGeminiServedAttempt(t *testing.T) {
 	on := translate.EmitOptions{AppendAutonomySystem: true}
-	assert.True(t, autonomyAppendFired(on, providers.ProviderAnthropic))
-	assert.True(t, autonomyAppendFired(on, providers.ProviderOpenAI))
-	assert.True(t, autonomyAppendFired(on, providers.ProviderOpenRouter))
-	assert.False(t, autonomyAppendFired(on, providers.ProviderGoogle), "PrepareGemini drops the append, telemetry must agree")
-	assert.False(t, autonomyAppendFired(translate.EmitOptions{}, providers.ProviderAnthropic))
+	assert.True(t, autonomyAppendFired(on, providers.ProviderAnthropic, ""))
+	assert.True(t, autonomyAppendFired(on, providers.ProviderOpenAI, ""))
+	assert.True(t, autonomyAppendFired(on, providers.ProviderOpenRouter, ""))
+	assert.False(t, autonomyAppendFired(on, providers.ProviderGoogle, ""), "PrepareGemini drops the append, telemetry must agree")
+	assert.False(t, autonomyAppendFired(translate.EmitOptions{}, providers.ProviderAnthropic, ""))
+}
+
+// No catalog surface maps to the Gemini family, so every OpenCode row carries
+// the append whichever wire it is served on; this pins that, not the surface
+// lookup itself.
+func TestAutonomyAppendFired_EveryOpenCodeSurfaceCarriesTheAppend(t *testing.T) {
+	on := translate.EmitOptions{AppendAutonomySystem: true}
+	assert.True(t, autonomyAppendFired(on, providers.ProviderOpenCode, catalog.ModelIDOpenCodeClaudeHaiku55.String()))
+	assert.True(t, autonomyAppendFired(on, providers.ProviderOpenCode, catalog.ModelIDOpenCodeGLM53.String()))
+	assert.True(t, autonomyAppendFired(on, providers.ProviderOpenCode, catalog.ModelIDOpenCodeGrok47.String()))
 }

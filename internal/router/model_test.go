@@ -59,3 +59,38 @@ func TestLookup_GPT61SolRequiresReasoning(t *testing.T) {
 	assert.Equal(t, []string{"low", "medium", "high", "xhigh", "max"}, spec.Reasoning().Levels)
 	assert.True(t, spec.Reasoning().AlwaysOn)
 }
+
+func TestOpenCodeSpecs(t *testing.T) {
+	cases := []struct {
+		model  string
+		levels []string
+		caps   []router.ModelCapability
+	}{
+		{"opencode/grok-4.7", []string{"low", "medium", "high", "xhigh"}, []router.ModelCapability{router.CapReasoning, router.CapXhighEffort}},
+		{"opencode/gpt-6-luna", []string{"low", "medium", "high", "xhigh", "max"}, []router.ModelCapability{router.CapReasoning, router.CapXhighEffort}},
+		{"opencode/claude-haiku-5-5", []string{"low", "medium", "high", "max", "xhigh"}, []router.ModelCapability{router.CapAdaptiveThinking, router.CapXhighEffort, router.CapAutoToolChoiceOnly}},
+		{"opencode/glm-5.3", []string{"low", "high", "max"}, []router.ModelCapability{router.CapChatReasoningEffort}},
+		{"opencode/glm-5.3-flash", []string{"low", "high", "max"}, []router.ModelCapability{router.CapChatReasoningEffort}},
+		{"opencode/kimi-k3", []string{"max"}, []router.ModelCapability{router.CapChatReasoningEffort}},
+		{"opencode/step-5-preview-free", []string{"low", "medium", "high"}, []router.ModelCapability{router.CapChatReasoningEffort}},
+		{"opencode/deepseek-v4.1-flash", []string{"low", "high", "max"}, []router.ModelCapability{router.CapChatReasoningEffort}},
+		{"opencode/qwen3.8-max", nil, []router.ModelCapability{router.CapExtendedThinking}},
+		{"opencode/qwen3.8-flash", nil, []router.ModelCapability{router.CapExtendedThinking}},
+	}
+	for _, tc := range cases {
+		spec := router.Lookup(tc.model)
+		assert.Equal(t, tc.levels, spec.Reasoning().Levels, tc.model)
+		for _, c := range tc.caps {
+			assert.Truef(t, spec.Supports(c), "%s should support %s", tc.model, c)
+		}
+		assert.False(t, spec.Supports(router.CapExtendedContext), tc.model)
+		assert.False(t, spec.Supports(router.CapReasoning) && spec.Supports(router.CapChatReasoningEffort), tc.model)
+	}
+	for _, model := range []string{"opencode/longcat-2.5-preview-free", "opencode/mimo-v2.6-pro", "opencode/mimo-v2.6-flash"} {
+		spec := router.Lookup(model)
+		assert.Empty(t, spec.Reasoning().Levels, model)
+		assert.False(t, spec.Supports(router.CapReasoning), model)
+		assert.False(t, spec.Supports(router.CapChatReasoningEffort), model)
+	}
+	assert.NoError(t, router.ValidateCatalogReasoningCapabilities())
+}

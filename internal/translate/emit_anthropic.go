@@ -90,8 +90,12 @@ func (e *RequestEnvelope) PrepareAnthropic(in http.Header, opts EmitOptions) (pr
 // applyAnthropicSessionAffinity sets metadata.user_id to the session-affinity
 // key for anthropic_gateway targets. Uses a spec Messages field so body-forwarding
 // gateways pass it without unknown-field 400s. Skips if the caller already set
-// user_id, or if the target is first-party Anthropic.
+// user_id, or if the target is first-party Anthropic. An opencode target is a
+// third party the router chose, so the caller's own user_id never reaches it.
 func applyAnthropicSessionAffinity(body []byte, opts EmitOptions) ([]byte, error) {
+	if opts.TargetProvider == providers.ProviderOpenCode {
+		return replaceAnthropicMetadata(body, opts.SessionAffinity)
+	}
 	if opts.TargetProvider != providers.ProviderAnthropicGateway || opts.SessionAffinity == "" {
 		return body, nil
 	}
@@ -99,6 +103,28 @@ func applyAnthropicSessionAffinity(body []byte, opts EmitOptions) ([]byte, error
 		return body, nil
 	}
 	out, err := sjson.SetBytes(body, "metadata.user_id", opts.SessionAffinity)
+	if err != nil {
+		return nil, fmt.Errorf("set metadata.user_id: %w", err)
+	}
+	return out, nil
+}
+
+// replaceAnthropicMetadata drops the caller's metadata, whose user_id clients
+// fill with account and session identifiers, and carries only the
+// session-affinity token in its place (nothing when there is none).
+func replaceAnthropicMetadata(body []byte, token string) ([]byte, error) {
+	out := body
+	if gjson.GetBytes(out, "metadata").Exists() {
+		var err error
+		out, err = sjson.DeleteBytes(out, "metadata")
+		if err != nil {
+			return nil, fmt.Errorf("delete metadata: %w", err)
+		}
+	}
+	if token == "" {
+		return out, nil
+	}
+	out, err := sjson.SetBytes(out, "metadata.user_id", token)
 	if err != nil {
 		return nil, fmt.Errorf("set metadata.user_id: %w", err)
 	}

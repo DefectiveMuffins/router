@@ -58,6 +58,7 @@ func TestFamilyForKnownProviders(t *testing.T) {
 		providers.ProviderMeta:           providers.FamilyOpenAICompat,
 		providers.ProviderWafer:          providers.FamilyOpenAICompat,
 		providers.ProviderWaferAnthropic: providers.FamilyAnthropic,
+		providers.ProviderOpenCode:       providers.FamilyOpenAICompat,
 	}
 	for p, want := range cases {
 		assert.Equalf(t, want, providers.FamilyFor(p), "family for %q", p)

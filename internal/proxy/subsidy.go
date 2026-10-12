@@ -360,6 +360,9 @@ func headroomFromSnapshot(provider string, snap usage.Snapshot, now time.Time) r
 	sort.Strings(scopes)
 	for _, scope := range scopes {
 		w := snap.Scoped[scope]
+		if !w.ResetAt.IsZero() && !w.ResetAt.After(now) {
+			continue
+		}
 		windows = append(windows, router.QuotaWindow{
 			Name:          "secondary",
 			UsedFraction:  w.UsedPercent,

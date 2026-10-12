@@ -108,6 +108,7 @@ func TestInferenceBoundaryRejectsNegativeFixtures(t *testing.T) {
 	}{
 		{name: "direct fixed model", fixture: "direct_fixed_model", expectedKind: findingTargetConstruction},
 		{name: "named constant fixed model", fixture: "named_constant_fixed_model", expectedKind: findingFeatureTargetConstant},
+		{name: "reviewed constant name in another package", fixture: "non_target_constant_elsewhere", expectedKind: findingFeatureTargetConstant},
 		{name: "aliased provider client", fixture: "aliased_provider_client", expectedKind: findingDirectProviderCall},
 		{name: "second raw HTTP client", fixture: "raw_inference_http", expectedKind: findingRawHTTPClient},
 		{name: "unregistered purpose", fixture: "unregistered_purpose", expectedKind: findingUnregisteredPurpose},
@@ -259,6 +260,9 @@ func scanPackages(t *testing.T, root string, patterns ...string) []finding {
 									continue
 								}
 								name := valueSpec.Names[index].Name
+								if _, reviewed := nonTargetConstants[loadedPackage.PkgPath+"."+name]; reviewed {
+									continue
+								}
 								appendFinding(findingFeatureTargetConstant, name, name+"="+value)
 							}
 						}
@@ -411,6 +415,14 @@ func providerCallAllowed(packagePath string) bool {
 
 func targetConstructionAllowed(packagePath string) bool {
 	return packagePath == routerPackagePath || strings.HasPrefix(packagePath, routerPackagePath+"/") || strings.HasPrefix(packagePath, modulePath+"/internal/dispatch")
+}
+
+// nonTargetConstants are reviewed constants, keyed by package path and name,
+// whose value equals a provider name but which identify a client app or
+// harness, never an inference target.
+var nonTargetConstants = map[string]struct{}{
+	modulePath + "/internal/proxy.ClientAppOpencode":       {},
+	modulePath + "/internal/auth.LifecycleHarnessOpencode": {},
 }
 
 func targetConstantAllowed(packagePath string) bool {

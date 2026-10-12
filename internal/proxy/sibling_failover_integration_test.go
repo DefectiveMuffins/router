@@ -436,3 +436,69 @@ func TestProxyMessages_SubscriptionOverloadSurfacesOnceAfterRetry(t *testing.T) 
 	assert.Equal(t, 1, strings.Count(rec.Body.String(), "overloaded_error"),
 		"the deferred overload is flushed exactly once across the rescue chain")
 }
+
+// TestProxyOpenAIChatCompletion_AnthropicRescuerReportsEffortUnsent: a chat
+// turn rescued onto an Anthropic-family candidate is emitted with neither
+// thinking nor output_config, so the user's level never reaches the wire and
+// the turn must not report it as sent.
+func TestProxyOpenAIChatCompletion_AnthropicRescuerReportsEffortUnsent(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		anthropicCount int
+	)
+	fireworks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"message":"service unavailable"}}`))
+	}))
+	t.Cleanup(fireworks.Close)
+	anthropicUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		anthropicCount++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, anthropicMessageSSE)
+	}))
+	t.Cleanup(anthropicUpstream.Close)
+
+	telemetry := newCaptureTelemetry()
+	svc := proxy.NewService(
+		&fakeRouter{decision: router.Decision{
+			Provider: providers.ProviderFireworks,
+			Model:    "deepseek/deepseek-v4-pro",
+			Metadata: &router.RoutingMetadata{
+				PolicyGroup:     "cluster-7",
+				CandidateModels: []string{"deepseek/deepseek-v4-pro", "claude-opus-4-8"},
+				CandidateProviders: map[string]string{
+					"deepseek/deepseek-v4-pro": providers.ProviderFireworks,
+					"claude-opus-4-8":          providers.ProviderAnthropic,
+				},
+			},
+		}},
+		map[string]providers.Client{
+			providers.ProviderAnthropic: anthropic.NewClient("test-anthropic-key", anthropicUpstream.URL),
+			providers.ProviderFireworks: openaicompat.NewClient("test-fw-key", fireworks.URL),
+		},
+		nil, false, nil, nil, false, providers.ProviderAnthropic, "claude-haiku-4-5", telemetry,
+	).WithDeploymentKeyedProviders(map[string]struct{}{
+		providers.ProviderAnthropic: {},
+		providers.ProviderFireworks: {},
+	}).WithRetrySleep(noRetrySleep)
+
+	rec := httptest.NewRecorder()
+	body := []byte(`{"model":"auto","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
+	ctx := router.WithRoutingKnobs(authedCtx("11111111-1111-1111-1111-111111111111"), &router.Overrides{ForceEffort: "high"})
+
+	require.NoError(t, svc.ProxyOpenAIChatCompletion(ctx, body, rec, req), "the Anthropic candidate serves the turn")
+	mu.Lock()
+	assert.Equal(t, 1, anthropicCount)
+	mu.Unlock()
+	assert.Equal(t, "claude-opus-4-8", rec.Header().Get(proxy.HeaderRouterModel))
+
+	row := telemetry.firstRow(t)
+	assert.Equal(t, "claude-opus-4-8", row.DecisionModel)
+	assert.Equal(t, "high", row.EffortSelected)
+	assert.Empty(t, row.EffortSent, "the rescuer's emit wrote no effort, so the turn is effort-mismatched")
+}

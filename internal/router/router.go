@@ -506,7 +506,9 @@ type SidecarServingStats struct {
 // SubscriptionHeadroom is one subscription lane's last observed quota state.
 type SubscriptionHeadroom struct {
 	// Provider is the lane the subscription serves (providers.ProviderAnthropic
-	// for Claude, providers.ProviderOpenAI for Codex/ChatGPT).
+	// for Claude, providers.ProviderOpenAI for Codex/ChatGPT), or a deployment
+	// plan lane such as providers.ProviderOpenCode, whose windows are per-model
+	// scopes.
 	Provider     string
 	Windows      []QuotaWindow
 	OverageInUse bool

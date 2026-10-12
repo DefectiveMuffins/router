@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"weave-os/router/internal/providers"
+	"weave-os/router/internal/router/catalog"
 	"weave-os/router/internal/router/turntype"
 	"weave-os/router/internal/translate"
 	"weave-os/router/internal/websearch"
@@ -35,6 +36,6 @@ func (s *Service) workspaceSystemAppendApplies(ctx context.Context, body []byte,
 // workspaceAppendFired reports whether the served attempt actually carried
 // the append: only the cross-format emitters apply it, so an attempt served
 // on an Anthropic-format binding is recorded as not fired.
-func workspaceAppendFired(opts translate.EmitOptions, servedProvider string) bool {
-	return opts.AppendWorkspaceSystem && providers.FamilyFor(servedProvider) != providers.FamilyAnthropic
+func workspaceAppendFired(opts translate.EmitOptions, servedProvider, servedModel string) bool {
+	return opts.AppendWorkspaceSystem && catalog.TranslationFamilyFor(servedProvider, servedModel) != providers.FamilyAnthropic
 }

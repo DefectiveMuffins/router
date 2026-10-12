@@ -44,6 +44,8 @@ const (
 	MetaBaseURL = "https://api.meta.ai/v1"
 	// WaferBaseURL is Wafer Serverless' OpenAI-compatible surface.
 	WaferBaseURL = "https://pass.wafer.ai/v1"
+	// OpenCodeBaseURL is the flat-fee coding plan gateway's OpenAI-wire base.
+	OpenCodeBaseURL = "https://opencode.ai/zen/go/v1"
 )
 
 // MiniMaxBaseURL returns the regional MiniMax OpenAI-compatible endpoint.
@@ -111,6 +113,9 @@ type Client struct {
 	// versionMemo resolves gateway base URLs that mount chat/completions one
 	// "/v1" below where the stored base URL points.
 	versionMemo providers.GatewayVersionMemo
+	// sessionHeader names the header that carries the request's
+	// session-affinity token upstream; empty sends none.
+	sessionHeader string
 }
 
 // Option configures a Client at construction.
@@ -172,11 +177,23 @@ func (c *Client) DeploymentPrincipal() string {
 
 // httpFor picks the HTTP client for a routed model: Grok models get the
 // wider time-to-first-byte guard, everything else the default transport.
-func (c *Client) httpFor(model string) *http.Client {
-	if strings.HasPrefix(model, "grok") && c.grokHTTP != nil {
-		return c.grokHTTP
+func (c *Client) httpFor(models ...string) *http.Client {
+	if c.grokHTTP == nil {
+		return c.http
+	}
+	for _, model := range models {
+		if strings.HasPrefix(model, "grok") {
+			return c.grokHTTP
+		}
 	}
 	return c.http
+}
+
+// WithSessionHeader returns c with the request's session-affinity token sent
+// under name on every upstream call, replacing any inbound value.
+func (c *Client) WithSessionHeader(name string) *Client {
+	c.sessionHeader = name
+	return c
 }
 
 // WithDefaultHeaders returns c with headers set on every upstream request.
@@ -368,13 +385,14 @@ func (c *Client) proxyTo(ctx context.Context, cancel context.CancelCauseFunc, ur
 	requestcontext.ApplyWIFTokenType(ctx, upstream)
 	requestcontext.ApplyIdentityHeader(ctx, upstream)
 	requestcontext.ApplyForwardedClientHeaders(ctx, upstream, r.Header)
+	requestcontext.ApplySessionAffinityHeader(ctx, upstream, c.sessionHeader)
 	if v := r.Header.Get("Accept"); v != "" {
 		upstream.Header.Set("Accept", v)
 	}
 
 	t := timing.TimingFrom(ctx)
 	t.StampUpstreamRequest()
-	resp, err := c.httpFor(decision.Model).Do(upstream)
+	resp, err := c.httpFor(decision.Model, gjson.GetBytes(body, "model").String()).Do(upstream)
 	if err != nil {
 		return fmt.Errorf("upstream call: %w", err)
 	}

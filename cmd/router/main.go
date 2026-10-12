@@ -432,6 +432,9 @@ func main() {
 		}
 	}
 
+	registerOpenCodeProvider(providerMap, envKeyedProviders, logger,
+		config.GetOr("OPENCODE_BASE_URL", openaiCompatProvider.OpenCodeBaseURL), byokOnly, discoveryHTTPClient)
+
 	{
 		// "bedrock-mantle" OpenAI-compatible surface (AWS-recommended over
 		// bedrock-runtime/InvokeModel). Auth is a static Bedrock API key
@@ -2288,6 +2291,66 @@ func registerDeploymentKeyedProvider(
 	default:
 		logger.Info(displayName+" provider registered (BYOK only — set "+keyEnvVar+" for deployment-level use)", "base_url", baseURL)
 	}
+}
+
+// registerOpenCodeProvider registers the flat-fee coding plan in every mode.
+// Only the deployment key authenticates it (there is no BYOK path), so
+// without that key it stays registered but serves nothing.
+func registerOpenCodeProvider(
+	providerMap map[string]providers.Client,
+	envKeyedProviders map[string]struct{},
+	logger *slog.Logger,
+	baseURL string,
+	byokOnly bool,
+	discovery *http.Client,
+) {
+	keyEnvVar := providers.APIKeyEnvVar(providers.ProviderOpenCode)
+	key := ""
+	if !byokOnly {
+		key = config.GetOr(keyEnvVar, "")
+	}
+	providerMap[providers.ProviderOpenCode] = newOpenCodeClient(key, baseURL, discovery)
+	switch {
+	case byokOnly:
+		logger.Info("OpenCode Go provider registered but disabled (deployment keys are not loaded in this mode)", "base_url", baseURL)
+	case key == "":
+		logger.Info("OpenCode Go provider registered but disabled (set "+keyEnvVar+")", "base_url", baseURL)
+	default:
+		envKeyedProviders[providers.ProviderOpenCode] = struct{}{}
+		logger.Info("OpenCode Go provider enabled", "base_url", baseURL)
+	}
+}
+
+const (
+	openCodeUserAgent     = "weave-router/1.0"
+	openCodeSessionHeader = "x-opencode-session"
+)
+
+// newOpenCodeClient builds the flat-fee coding plan's client: one key over
+// three wire surfaces. The Messages surface is wired only with a key, since the
+// Anthropic adapter relays the caller's own credentials when it has none.
+func newOpenCodeClient(key, baseURL string, discovery *http.Client) providers.Client {
+	ids := upstreamIDsForProvider(providers.ProviderOpenCode)
+	openAIWire := openaiCompatProvider.NewClientWithModelIDMap(key, baseURL, ids,
+		openaiCompatProvider.WithModelListHTTPClient(discovery)).
+		WithProtectedHeaders(http.Header{"User-Agent": {openCodeUserAgent}}).
+		WithSessionHeader(openCodeSessionHeader)
+	var messagesWire providers.Client
+	if key != "" {
+		messagesWire = anthropic.NewClient(key, openCodeMessagesBaseURL(baseURL),
+			anthropic.WithModelListHTTPClient(discovery)).
+			WithModelIDMap(ids).
+			WithProtectedHeaders(http.Header{"User-Agent": {openCodeUserAgent}}).
+			WithSessionHeader(openCodeSessionHeader)
+	}
+	return dispatch.NewSurfaceClient(dispatch.SurfaceClients{OpenAI: openAIWire, Anthropic: messagesWire},
+		func(model string) providers.WireSurface { return catalog.SurfaceFor(providers.ProviderOpenCode, model) })
+}
+
+// openCodeMessagesBaseURL drops the version segment the Anthropic adapter
+// appends itself, so the Messages call is a single URL and never a 404 probe.
+func openCodeMessagesBaseURL(baseURL string) string {
+	return strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
 }
 
 func upstreamIDsForProvider(provider string) map[string]string {

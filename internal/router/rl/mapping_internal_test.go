@@ -48,6 +48,8 @@ var defaultRosterPrefixProviders = map[string]struct{}{
 	// vendor prefix is right; the bare ID lets the sidecar match what it can.
 	providers.ProviderOpenAIGateway: {},
 	providers.ProviderLocalOpenAI:   {},
+	// Catalog ids already carry the plan's namespace.
+	providers.ProviderOpenCode: {},
 }
 
 // TestRosterIDForCoversEveryProvider guards against a new Provider* constant

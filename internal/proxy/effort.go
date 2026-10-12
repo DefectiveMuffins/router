@@ -5,7 +5,9 @@ import (
 	"strings"
 
 	"weave-os/router/internal/observability/otel"
+	"weave-os/router/internal/providers"
 	"weave-os/router/internal/router"
+	"weave-os/router/internal/router/catalog"
 	"weave-os/router/internal/translate"
 )
 
@@ -71,7 +73,7 @@ func applyEffortAttrs(b *otel.AttrBuilder, e effortResolution) *otel.AttrBuilder
 // level already failed.
 func (s *Service) resolveEffort(ctx context.Context, decision router.Decision, caps router.ModelSpec, escalate bool) effortResolution {
 	arm := router.CanonicalizeEffort(decision.Effort)
-	escalationAllowed := s.ResolveEffortEscalation(ctx) || strings.HasPrefix(decision.Model, "grok-")
+	escalationAllowed := s.ResolveEffortEscalation(ctx) || strings.HasPrefix(effortPolicyName(decision.Model), "grok-")
 	if knobs := routingKnobsForRequest(ctx); knobs != nil && knobs.ForceEffort != "" {
 		return effortResolutionFor(caps, arm, knobs.ForceEffort, effortSourceUser)
 	}
@@ -92,6 +94,16 @@ func (s *Service) resolveEffort(ctx context.Context, decision router.Decision, c
 		}
 	}
 	return effortResolution{}
+}
+
+// onChatIngress corrects e for a chat/completions-ingress dispatch to d: an
+// Anthropic-family target is emitted with neither thinking nor output_config,
+// so no level reaches the wire and the turn must not train the arm on one.
+func (e effortResolution) onChatIngress(d router.Decision) effortResolution {
+	if catalog.TranslationFamilyFor(d.Provider, d.Model) == providers.FamilyAnthropic {
+		e.Sent = ""
+	}
+	return e
 }
 
 func effortResolutionFor(caps router.ModelSpec, arm, level, source string) effortResolution {

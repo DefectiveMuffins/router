@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"weave-os/router/internal/providers"
 	"weave-os/router/internal/proxy/usage"
 
 	"github.com/stretchr/testify/assert"
@@ -485,4 +486,10 @@ func TestObserver_NoResetFallsBackToWindowLength(t *testing.T) {
 	clock = base.Add(6 * 24 * time.Hour) // 6 days: still inside the 7-day window
 	_, ok := o.Snapshot(key)
 	assert.True(t, ok, "with no reset header the window-length horizon still applies")
+}
+
+func TestProviderLaneKey(t *testing.T) {
+	key := usage.ProviderLaneKey(providers.ProviderOpenCode)
+	assert.Equal(t, usage.CredentialKey("provider:"+providers.ProviderOpenCode), key)
+	assert.NotEqual(t, usage.KeyFor([]byte("salt"), []byte(providers.ProviderOpenCode)), key)
 }

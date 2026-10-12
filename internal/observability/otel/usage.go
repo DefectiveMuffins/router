@@ -48,8 +48,8 @@ const (
 // UsageExtractor wraps an http.ResponseWriter and sniffs token usage (SSE or
 // JSON) as bytes flow through. Only the unconsumed tail is retained between writes.
 type UsageExtractor struct {
-	inner    http.ResponseWriter
-	provider string
+	inner  http.ResponseWriter
+	family providers.TranslationFamily
 
 	input              int
 	output             int
@@ -77,9 +77,15 @@ type UsageExtractor struct {
 // response format. With a nil inner, use only recording/accessor methods,
 // not ResponseWriter methods.
 func NewUsageExtractor(inner http.ResponseWriter, provider string) *UsageExtractor {
+	return NewUsageExtractorForFamily(inner, providers.FamilyFor(provider))
+}
+
+// NewUsageExtractorForFamily is NewUsageExtractor for a stream whose wire
+// family differs from its provider's (a multi-surface provider).
+func NewUsageExtractorForFamily(inner http.ResponseWriter, family providers.TranslationFamily) *UsageExtractor {
 	return &UsageExtractor{
-		inner:    inner,
-		provider: provider,
+		inner:  inner,
+		family: family,
 	}
 }
 
@@ -233,7 +239,7 @@ func (u *UsageExtractor) scanBuffer() {
 // Dispatch is family-based so Anthropic-spec gateway providers
 // (e.g. anthropic_gateway) are parsed correctly instead of recording zero usage.
 func (u *UsageExtractor) extractFromSSEEvent(eventType []byte, data []byte) {
-	switch providers.FamilyFor(u.provider) {
+	switch u.family {
 	case providers.FamilyAnthropic:
 		u.extractAnthropicSSE(eventType, data)
 	case providers.FamilyOpenAICompat, providers.FamilyGemini:
@@ -264,7 +270,7 @@ func (u *UsageExtractor) extractAnthropicSSE(eventType []byte, data []byte) {
 		}
 	}
 
-	input, output, cacheCreation, cacheRead, found := extractUsageGJSON(data, providers.ProviderAnthropic)
+	input, output, cacheCreation, cacheRead, found := extractUsageGJSON(data, providers.FamilyAnthropic)
 	if !found {
 		return
 	}
@@ -293,11 +299,11 @@ func (u *UsageExtractor) extractOpenAISSE(data []byte) {
 	}
 
 	u.extractOpenAIChatSSEResponse(trimmed)
-	if providers.FamilyFor(u.provider) == providers.FamilyGemini && gjson.GetBytes(trimmed, "candidates.0.finishReason").String() == geminiFinishMaxTokens {
+	if u.family == providers.FamilyGemini && gjson.GetBytes(trimmed, "candidates.0.finishReason").String() == geminiFinishMaxTokens {
 		u.RecordOutputLimitReached()
 	}
 
-	input, output, cacheCreation, cacheRead, found := extractUsageGJSON(trimmed, u.provider)
+	input, output, cacheCreation, cacheRead, found := extractUsageGJSON(trimmed, u.family)
 	if !found {
 		return
 	}
@@ -321,7 +327,7 @@ func (u *UsageExtractor) tryExtractFromJSON() {
 		return
 	}
 
-	input, output, cacheCreation, cacheRead, found := extractUsageGJSON(u.leftover, u.provider)
+	input, output, cacheCreation, cacheRead, found := extractUsageGJSON(u.leftover, u.family)
 	if !found {
 		return
 	}
@@ -329,7 +335,7 @@ func (u *UsageExtractor) tryExtractFromJSON() {
 	// Keyed off usage being present: leftover holds a partial body on every
 	// write before the last, and usage is the final top-level member, so a
 	// found usage object is what makes content[] safe to count.
-	switch providers.FamilyFor(u.provider) {
+	switch u.family {
 	case providers.FamilyAnthropic:
 		u.extractAnthropicJSONResponse(u.leftover)
 	case providers.FamilyOpenAICompat:
@@ -378,7 +384,7 @@ func (u *UsageExtractor) extractAnthropicJSONResponse(data []byte) {
 // is stable across the call's argument fragments. A Responses or Gemini frame
 // carries no choices, so nothing is observed from one.
 func (u *UsageExtractor) extractOpenAIChatSSEResponse(data []byte) {
-	if providers.FamilyFor(u.provider) != providers.FamilyOpenAICompat {
+	if u.family != providers.FamilyOpenAICompat {
 		return
 	}
 	gjson.GetBytes(data, "choices").ForEach(func(_, choice gjson.Result) bool {
@@ -424,9 +430,7 @@ func (u *UsageExtractor) observeOpenAIToolCall(index int) {
 // OpenAI cache-read maps from cached_tokens; GPT-5.6+ cache-write maps from cache_write_tokens.
 // Google's native :generateContent uses usageMetadata; its OpenAI-compat surface
 // uses the OpenAI shape instead.
-func extractUsageGJSON(data []byte, provider string) (input, output, cacheCreation, cacheRead int, found bool) {
-	family := providers.FamilyFor(provider)
-
+func extractUsageGJSON(data []byte, family providers.TranslationFamily) (input, output, cacheCreation, cacheRead int, found bool) {
 	if family == providers.FamilyGemini {
 		if meta := gjson.GetBytes(data, "usageMetadata"); meta.Exists() {
 			input = int(meta.Get("promptTokenCount").Int())

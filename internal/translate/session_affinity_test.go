@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"weave-os/router/internal/providers"
+	"weave-os/router/internal/router"
+	"weave-os/router/internal/router/catalog"
 	"weave-os/router/internal/translate"
 
 	"github.com/stretchr/testify/assert"
@@ -231,6 +233,100 @@ func TestSessionAffinity_DirectAnthropicStaysUnhinted(t *testing.T) {
 
 	_, ok := metadataUserID(t, out.Body)
 	assert.False(t, ok, "first-party Anthropic must not get a synthetic metadata.user_id")
+}
+
+func TestSessionAffinity_OpenCodeMessagesRowNeverSeesCallerUserID(t *testing.T) {
+	const callerUserID = "user_abc_account_1111_session_2222"
+	src := []byte(`{"model":"claude-x","messages":[{"role":"user","content":"hi"}],"max_tokens":256,"metadata":{"user_id":"` + callerUserID + `"}}`)
+	env, err := translate.ParseAnthropic(src)
+	require.NoError(t, err)
+
+	for _, id := range []catalog.ModelID{catalog.ModelIDOpenCodeClaudeHaiku55, catalog.ModelIDOpenCodeQwen38Max, catalog.ModelIDOpenCodeQwen38Flash} {
+		opts := translate.EmitOptions{
+			TargetModel:     id.String(),
+			TargetProvider:  providers.ProviderOpenCode,
+			Capabilities:    router.Lookup(id.String()),
+			SessionAffinity: affinityKey,
+		}
+		out, err := env.PrepareAnthropic(nil, opts)
+		require.NoError(t, err)
+		v, ok := metadataUserID(t, out.Body)
+		require.True(t, ok, id)
+		assert.Equal(t, affinityKey, v, "only the session digest replaces the caller's identifier: %s", id)
+
+		opts.SessionAffinity = ""
+		out, err = env.PrepareAnthropic(nil, opts)
+		require.NoError(t, err)
+		assert.NotContains(t, string(out.Body), callerUserID, id)
+		assert.NotContains(t, string(out.Body), `"metadata"`, id)
+	}
+
+	gateway, err := env.PrepareAnthropic(nil, translate.EmitOptions{
+		TargetModel:     "claude-opus-4-7",
+		TargetProvider:  providers.ProviderAnthropicGateway,
+		SessionAffinity: affinityKey,
+	})
+	require.NoError(t, err)
+	v, ok := metadataUserID(t, gateway.Body)
+	require.True(t, ok)
+	assert.Equal(t, callerUserID, v, "a caller-chosen gateway keeps the caller's own value")
+}
+
+// callerIdentifierKeys are the body fields a caller fills with its own
+// end-user, account or tracking identifiers.
+var callerIdentifierKeys = []string{"user", "safety_identifier", "prompt_cache_key", "metadata"}
+
+func TestSessionAffinity_OpenCodeNeverSeesCallerIdentifiers(t *testing.T) {
+	chatIngress := []byte(`{"model":"gpt-x","messages":[{"role":"system","content":"be terse"},{"role":"user","content":"hi"}],` +
+		`"user":"user_SECRET","safety_identifier":"sid-SECRET","prompt_cache_key":"pck-SECRET","metadata":{"owner":"meta-SECRET"}}`)
+	responsesIngress, err := translate.ConvertResponsesToChatCompletions([]byte(`{"model":"gpt-x","instructions":"be terse",` +
+		`"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],` +
+		`"user":"user_SECRET","safety_identifier":"sid-SECRET","prompt_cache_key":"pck-SECRET","metadata":{"owner":"meta-SECRET"}}`))
+	require.NoError(t, err)
+	require.Contains(t, string(responsesIngress.Body), "meta-SECRET", "the Responses projection carries the caller's metadata")
+
+	for ingress, body := range map[string][]byte{"chat": chatIngress, "responses": responsesIngress.Body} {
+		env, err := translate.ParseOpenAI(body)
+		require.NoError(t, err)
+		for _, id := range []catalog.ModelID{catalog.ModelIDOpenCodeGLM53, catalog.ModelIDOpenCodeKimiK3, catalog.ModelIDOpenCodeGPT6Luna} {
+			t.Run(ingress+"/"+id.String(), func(t *testing.T) {
+				opts := translate.EmitOptions{
+					TargetModel:     id.String(),
+					TargetProvider:  providers.ProviderOpenCode,
+					Capabilities:    router.Lookup(id.String()),
+					SessionAffinity: affinityKey,
+				}
+				prepare := env.PrepareOpenAI
+				if catalog.SurfaceFor(providers.ProviderOpenCode, id.String()) == providers.SurfaceResponses {
+					prepare = env.PrepareOpenAIResponses
+				}
+				out, err := prepare(nil, opts)
+				require.NoError(t, err)
+				var doc map[string]any
+				require.NoError(t, json.Unmarshal(out.Body, &doc))
+				for _, key := range callerIdentifierKeys {
+					assert.NotContains(t, doc, key)
+				}
+				assert.NotContains(t, string(out.Body), "SECRET")
+				assert.Empty(t, out.Headers.Get("x-session-affinity"), "the plan takes its own session header, set by the adapter")
+			})
+		}
+	}
+
+	env, err := translate.ParseOpenAI(chatIngress)
+	require.NoError(t, err)
+	control, err := env.PrepareOpenAI(nil, translate.EmitOptions{
+		TargetModel:     "deepseek/deepseek-v4-pro",
+		TargetProvider:  providers.ProviderFireworks,
+		SessionAffinity: affinityKey,
+	})
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(control.Body, &doc))
+	for _, key := range callerIdentifierKeys {
+		assert.Contains(t, doc, key, "another OpenAI-compatible target keeps the caller's body as before")
+	}
+	assert.Equal(t, affinityKey, control.Headers.Get("x-session-affinity"))
 }
 
 func TestSessionAffinity_AnthropicGatewayEmptyIsNoOp(t *testing.T) {

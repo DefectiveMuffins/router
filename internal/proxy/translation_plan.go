@@ -142,8 +142,18 @@ func (s *Service) planTranslation(req router.Request) TranslationPlan {
 		for _, constraint := range constraints {
 			plan.Exclusions = append(plan.Exclusions, constraintExclusions(candidates, constraint, plan.Enforced)...)
 		}
+		compatible := filterProvidersByConstraints(candidates, constraints)
+		for _, model := range surfaceMismatchedModels(compatible, plan.TargetFamily) {
+			plan.Exclusions = append(plan.Exclusions, TranslationExclusion{Code: "surface_family_mismatch", Model: model, Enforced: plan.Enforced})
+			if plan.Enforced {
+				if plan.ExcludedModels == nil {
+					plan.ExcludedModels = make(map[string]struct{})
+				}
+				plan.ExcludedModels[model] = struct{}{}
+			}
+		}
 		if plan.Enforced {
-			plan.EnabledProviders = filterProvidersByConstraints(candidates, constraints)
+			plan.EnabledProviders = compatible
 			// A candidate must also be registered locally. This distinguishes an
 			// unavailable compatible route from an intrinsic wire incompatibility
 			// before the scorer can turn it into a generic no-eligible-model error.
@@ -172,7 +182,7 @@ func (s *Service) planTranslation(req router.Request) TranslationPlan {
 
 // translationConstraints is the compatibility matrix. Native source routing
 // uses a family for Messages/Chat/GenerateContent, but Responses is exact-
-// provider because only the OpenAI adapter currently implements EndpointResponses.
+// provider because only the OpenAI adapter round-trips native Responses items.
 func translationConstraints(req router.TranslationRequirements) ([]translationConstraint, bool) {
 	constraints := make([]translationConstraint, 0, 8)
 	addSourceNative := func(code string) bool {
@@ -226,6 +236,30 @@ func sourceNativeConstraint(req router.TranslationRequirements, code string) (tr
 	default:
 		return translationConstraint{}, false
 	}
+}
+
+// surfaceMismatchedModels lists catalog models reachable through eligible
+// providers only on bindings whose wire surface is not family.
+func surfaceMismatchedModels(eligible map[string]struct{}, family providers.TranslationFamily) []string {
+	var out []string
+	for _, m := range catalog.Models {
+		reachable, matched := false, false
+		for _, b := range m.Providers {
+			if _, ok := eligible[b.Provider]; !ok {
+				continue
+			}
+			reachable = true
+			if b.Surface.Family(b.Provider) == family {
+				matched = true
+				break
+			}
+		}
+		if reachable && !matched {
+			out = append(out, m.ID)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func singletonProviderSet(provider string) map[string]struct{} {

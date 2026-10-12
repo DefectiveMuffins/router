@@ -80,6 +80,9 @@ const (
 	// serves only the models its key's aliases name, but it is additive: it
 	// never displaces the installation's other upstreams.
 	ProviderLocalOpenAI = "local_openai"
+	// ProviderOpenCode is a flat-fee coding plan's gateway: one key serves its
+	// models on three wire surfaces, chosen per catalog binding.
+	ProviderOpenCode = "opencode"
 )
 
 // TranslationFamily is the wire-format family a provider speaks; the proxy
@@ -125,6 +128,7 @@ var ProviderFamilies = map[string]TranslationFamily{
 	ProviderAnthropicGateway: FamilyAnthropic,
 	ProviderOpenAIGateway:    FamilyOpenAICompat,
 	ProviderLocalOpenAI:      FamilyOpenAICompat,
+	ProviderOpenCode:         FamilyOpenAICompat,
 }
 
 // FamilyFor returns the translation family for a provider, or FamilyUnknown
@@ -212,6 +216,7 @@ var APIKeyEnvVars = map[string]string{
 	// Unused at deployment level: a local server is reachable only through a
 	// BYOK key, whose model_aliases are what make it routable.
 	ProviderLocalOpenAI: "LOCAL_OPENAI_API_KEY",
+	ProviderOpenCode:    "OPENCODE_API_KEY",
 }
 
 // APIKeyEnvVar returns the env-var name for the given provider, or empty
@@ -257,6 +262,7 @@ var CacheTTL = map[string]time.Duration{
 	ProviderAnthropicGateway: 5 * time.Minute,
 	ProviderOpenAIGateway:    5 * time.Minute,
 	ProviderLocalOpenAI:      5 * time.Minute,
+	ProviderOpenCode:         5 * time.Minute,
 }
 
 // DefaultCacheTTL is the conservative fallback cache lifetime for providers

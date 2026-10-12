@@ -126,6 +126,12 @@ type ProviderBinding struct {
 	// ContextWindow overrides the model-level ContextWindow for this binding.
 	// Zero means inherit. Use when the served window differs by provider.
 	ContextWindow int
+	// Surface is the wire API this binding is served on when its provider
+	// mounts several; the zero value defers to the provider's family.
+	Surface providers.WireSurface
+	// Free marks a binding whose zero Price is intended. Every other binding
+	// must carry a positive price.
+	Free bool
 }
 
 // ToolUseQuality marks a model's reliability under has_tools=true turns.
@@ -176,6 +182,20 @@ const (
 	ModelIDClaudeSonnet46 ModelID = "claude-sonnet-4-6"
 	ModelIDClaudeOpus48   ModelID = "claude-opus-4-8"
 	ModelIDGPT55          ModelID = "gpt-5.5"
+
+	ModelIDOpenCodeGrok47               ModelID = "opencode/grok-4.7"
+	ModelIDOpenCodeGPT6Luna             ModelID = "opencode/gpt-6-luna"
+	ModelIDOpenCodeClaudeHaiku55        ModelID = "opencode/claude-haiku-5-5"
+	ModelIDOpenCodeGLM53                ModelID = "opencode/glm-5.3"
+	ModelIDOpenCodeGLM53Flash           ModelID = "opencode/glm-5.3-flash"
+	ModelIDOpenCodeKimiK3               ModelID = "opencode/kimi-k3"
+	ModelIDOpenCodeStep5PreviewFree     ModelID = "opencode/step-5-preview-free"
+	ModelIDOpenCodeLongCat25PreviewFree ModelID = "opencode/longcat-2.5-preview-free"
+	ModelIDOpenCodeMiMoV26Pro           ModelID = "opencode/mimo-v2.6-pro"
+	ModelIDOpenCodeMiMoV26Flash         ModelID = "opencode/mimo-v2.6-flash"
+	ModelIDOpenCodeQwen38Max            ModelID = "opencode/qwen3.8-max"
+	ModelIDOpenCodeQwen38Flash          ModelID = "opencode/qwen3.8-flash"
+	ModelIDOpenCodeDeepSeekV41Flash     ModelID = "opencode/deepseek-v4.1-flash"
 )
 
 func (id ModelID) String() string {
@@ -816,5 +836,59 @@ var Models = []Model{
 	{ID: "qwen/qwen3.8-max", Source: SourceOpenSource, Tier: TierHigh, ContextWindow: 131_072, Providers: []ProviderBinding{
 		{Provider: providers.ProviderFireworks, UpstreamID: "accounts/fireworks/models/qwen3p8-max",
 			Price: Pricing{InputUSDPer1M: 2.000, OutputUSDPer1M: 6.000, CacheReadMultiplier: 0.125}},
+	}},
+
+	// --- OpenCode Go --- a flat-fee coding plan metered per model at these
+	// token prices (indicative). One provider key, three wire surfaces: each
+	// binding's Surface picks the wire. No long-context or fast tiers.
+	{ID: string(ModelIDOpenCodeGrok47), Source: SourceClosedSource, Tier: TierHigh, ContextWindow: 500_000, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "grok-4.7", Surface: providers.SurfaceResponses,
+			Price: Pricing{InputUSDPer1M: 2.00, OutputUSDPer1M: 6.00, CacheReadMultiplier: 0.25}},
+	}},
+	{ID: string(ModelIDOpenCodeGPT6Luna), Source: SourceClosedSource, Tier: TierMid, ContextWindow: 1_050_000, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "gpt-6-luna", Surface: providers.SurfaceResponses,
+			Price: Pricing{InputUSDPer1M: 0.10, OutputUSDPer1M: 0.50, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.10}},
+	}},
+	{ID: string(ModelIDOpenCodeClaudeHaiku55), Source: SourceClosedSource, Tier: TierLow, ContextWindow: 200_000, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "claude-haiku-5-5", Surface: providers.SurfaceMessages,
+			Price: Pricing{InputUSDPer1M: 0.10, OutputUSDPer1M: 0.50, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.10}},
+	}},
+	{ID: string(ModelIDOpenCodeGLM53), Source: SourceOpenSource, Tier: TierHigh, ContextWindow: 1_048_576, ImageInput: ImageInputUnsupported, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "glm-5.3", Surface: providers.SurfaceChatCompletions,
+			Price: Pricing{InputUSDPer1M: 1.40, OutputUSDPer1M: 4.40, CacheReadMultiplier: 0.26 / 1.40}},
+	}},
+	{ID: string(ModelIDOpenCodeGLM53Flash), Source: SourceOpenSource, Tier: TierLow, ContextWindow: 1_048_576, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "glm-5.3-flash", Surface: providers.SurfaceChatCompletions,
+			Price: Pricing{InputUSDPer1M: 0.15, OutputUSDPer1M: 0.50, CacheReadMultiplier: 0.20}},
+	}},
+	{ID: string(ModelIDOpenCodeKimiK3), Source: SourceOpenSource, Tier: TierHigh, ContextWindow: 1_048_576, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "kimi-k3", Surface: providers.SurfaceChatCompletions,
+			Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00, CacheReadMultiplier: 0.10}},
+	}},
+	{ID: string(ModelIDOpenCodeStep5PreviewFree), Source: SourceUnknown, Tier: TierMid, ContextWindow: 128_000, ImageInput: ImageInputUnsupported, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "step-5-preview-free", Surface: providers.SurfaceChatCompletions, Free: true},
+	}},
+	{ID: string(ModelIDOpenCodeLongCat25PreviewFree), Source: SourceUnknown, Tier: TierLow, ContextWindow: 128_000, ImageInput: ImageInputUnsupported, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "longcat-2.5-preview-free", Surface: providers.SurfaceChatCompletions, Free: true},
+	}},
+	{ID: string(ModelIDOpenCodeMiMoV26Pro), Source: SourceOpenSource, Tier: TierHigh, ContextWindow: 1_048_576, ThinkTagReasoning: true, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "mimo-v2.6-pro", Surface: providers.SurfaceChatCompletions,
+			Price: Pricing{InputUSDPer1M: 0.435, OutputUSDPer1M: 0.87, CacheReadMultiplier: 0.00827586}},
+	}},
+	{ID: string(ModelIDOpenCodeMiMoV26Flash), Source: SourceOpenSource, Tier: TierMid, ContextWindow: 1_048_576, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "mimo-v2.6-flash", Surface: providers.SurfaceChatCompletions,
+			Price: Pricing{InputUSDPer1M: 0.14, OutputUSDPer1M: 0.28, CacheReadMultiplier: 0.02}},
+	}},
+	{ID: string(ModelIDOpenCodeQwen38Max), Source: SourceOpenSource, Tier: TierHigh, ContextWindow: 131_072, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "qwen3.8-max", Surface: providers.SurfaceMessages,
+			Price: Pricing{InputUSDPer1M: 2.00, OutputUSDPer1M: 6.00, CacheReadMultiplier: 0.125}},
+	}},
+	{ID: string(ModelIDOpenCodeQwen38Flash), Source: SourceUnknown, Tier: TierLow, ContextWindow: 131_072, ImageInput: ImageInputUnsupported, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "qwen3.8-flash", Surface: providers.SurfaceMessages,
+			Price: Pricing{InputUSDPer1M: 0.15, OutputUSDPer1M: 0.47}},
+	}},
+	{ID: string(ModelIDOpenCodeDeepSeekV41Flash), Source: SourceOpenSource, Tier: TierLow, ContextWindow: 1_048_576, Providers: []ProviderBinding{
+		{Provider: providers.ProviderOpenCode, UpstreamID: "deepseek-v4.1-flash", Surface: providers.SurfaceChatCompletions,
+			Price: Pricing{InputUSDPer1M: 0.15, OutputUSDPer1M: 0.60, CacheReadMultiplier: 0.007 / 0.15}},
 	}},
 }

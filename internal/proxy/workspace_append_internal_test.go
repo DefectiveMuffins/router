@@ -9,6 +9,7 @@ import (
 	"weave-os/router/internal/flags"
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/requestcontext"
+	"weave-os/router/internal/router/catalog"
 	"weave-os/router/internal/router/turntype"
 	"weave-os/router/internal/translate"
 )
@@ -84,11 +85,14 @@ func TestWorkspaceSystemAppendApplies_IdempotentAndSkipsSearchSubTurn(t *testing
 
 func TestWorkspaceAppendFired_OnlyForCrossFormatServedAttempts(t *testing.T) {
 	on := translate.EmitOptions{AppendWorkspaceSystem: true}
-	assert.True(t, workspaceAppendFired(on, providers.ProviderOpenAI))
-	assert.True(t, workspaceAppendFired(on, providers.ProviderOpenAIGateway))
-	assert.True(t, workspaceAppendFired(on, providers.ProviderOpenRouter))
-	assert.True(t, workspaceAppendFired(on, providers.ProviderGoogle), "PrepareGemini carries this append, unlike the autonomy one")
-	assert.False(t, workspaceAppendFired(on, providers.ProviderAnthropic), "PrepareAnthropic ignores the option, telemetry must agree")
-	assert.False(t, workspaceAppendFired(on, providers.ProviderAnthropicGateway))
-	assert.False(t, workspaceAppendFired(translate.EmitOptions{}, providers.ProviderOpenAI))
+	assert.True(t, workspaceAppendFired(on, providers.ProviderOpenAI, ""))
+	assert.True(t, workspaceAppendFired(on, providers.ProviderOpenAIGateway, ""))
+	assert.True(t, workspaceAppendFired(on, providers.ProviderOpenRouter, ""))
+	assert.True(t, workspaceAppendFired(on, providers.ProviderGoogle, ""), "PrepareGemini carries this append, unlike the autonomy one")
+	assert.False(t, workspaceAppendFired(on, providers.ProviderAnthropic, ""), "PrepareAnthropic ignores the option, telemetry must agree")
+	assert.False(t, workspaceAppendFired(on, providers.ProviderAnthropicGateway, ""))
+	assert.False(t, workspaceAppendFired(translate.EmitOptions{}, providers.ProviderOpenAI, ""))
+	assert.False(t, workspaceAppendFired(on, providers.ProviderOpenCode, catalog.ModelIDOpenCodeClaudeHaiku55.String()),
+		"a Messages-surface binding is emitted by PrepareAnthropic")
+	assert.True(t, workspaceAppendFired(on, providers.ProviderOpenCode, catalog.ModelIDOpenCodeGLM53.String()))
 }

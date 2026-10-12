@@ -317,3 +317,30 @@ func TestProxyOpenAIResponses_CyberRefusalRetriesOnlyOnce(t *testing.T) {
 	assert.Equal(t, 1, openAIHits)
 	assert.Equal(t, 1, anthropicHits, "the fallback's own refusal is not rescued again")
 }
+
+// The fallback is Anthropic-family, which a chat or Responses caller's turn is
+// emitted to with neither thinking nor output_config, so the user's level never
+// reaches the wire and the rescued turn must not report it as sent.
+func TestProxyOpenAIResponses_CyberRefusalRescueReportsEffortUnsent(t *testing.T) {
+	upstreams := &cyberRefusalUpstreams{openAIResponse: streamResponses(cyberRefusalSSE)}
+	openAIURL, anthropicURL := upstreams.start(t)
+	telemetry := newCaptureTelemetry()
+	svc := cyberRefusalService(openAIURL, anthropicURL, "test", newFakePinStore(), telemetry)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(""))
+	ctx := context.WithValue(
+		authedCtx(cyberRefusalInstallationID),
+		proxy.ClientIdentityContextKey{},
+		proxy.ClientIdentity{ClientApp: proxy.ClientAppCodex},
+	)
+	ctx = router.WithRoutingKnobs(ctx, &router.Overrides{ForceEffort: "high"})
+	_ = svc.ProxyOpenAIResponses(ctx, []byte(responsesTurnBody), rec, req)
+
+	_, anthropicHits := upstreams.counts()
+	require.Equal(t, 1, anthropicHits, "the turn is re-served on the Anthropic fallback")
+	row := telemetry.firstRow(t)
+	assert.Equal(t, "claude-sonnet-5", row.DecisionModel)
+	assert.Equal(t, "high", row.EffortSelected)
+	assert.Empty(t, row.EffortSent, "the fallback's emit wrote no effort, so the turn is effort-mismatched")
+}

@@ -38,6 +38,10 @@ import (
 // reversed via a precomputed table.
 type CredentialKey string
 
+// ProviderLaneKey is the observer key for a provider-wide plan lane that has
+// no per-caller credential (a deployment-keyed flat-fee plan).
+func ProviderLaneKey(provider string) CredentialKey { return CredentialKey("provider:" + provider) }
+
 // KeyFor derives the CredentialKey for a subscription token under salt.
 func KeyFor(salt, token []byte) CredentialKey {
 	mac := hmac.New(sha256.New, salt)
@@ -74,6 +78,9 @@ const (
 	// ScopeSonnet is the weekly Sonnet limit, reported only as a claim + status.
 	ScopeSonnet = "sonnet"
 )
+
+// StatusRejected is the scoped-window status of a limit the upstream refused.
+const StatusRejected = "rejected"
 
 // ScopedWindow is one model-family limit. Opus and Sonnet arrive as a
 // representative claim with no utilization figure, so Status is the only
@@ -448,7 +455,7 @@ func parseAnthropicScoped(h http.Header, claim AnthropicClaim, unifiedReset time
 	if scope, ok := claimScopes[claim]; ok {
 		status := h.Get("anthropic-ratelimit-unified-status")
 		w := Window{WindowMinutes: 7 * 24 * 60, ResetAt: unifiedReset}
-		if status == "rejected" {
+		if status == StatusRejected {
 			w.UsedPercent = 1
 		}
 		scoped[scope] = ScopedWindow{Window: w, Status: status}

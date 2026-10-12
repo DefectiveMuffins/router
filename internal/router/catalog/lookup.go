@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"weave-os/router/internal/providers"
 	"weave-os/router/internal/router"
 )
 
@@ -198,6 +199,27 @@ func UpstreamIDFor(catalogID, bindingID string) string {
 		return bindingID
 	}
 	return catalogID
+}
+
+// SurfaceFor returns the wire surface provider serves model id on, or
+// SurfaceProviderDefault when the binding names none or does not exist.
+func SurfaceFor(provider, id string) providers.WireSurface {
+	m, ok := ByID(id)
+	if !ok {
+		return providers.SurfaceProviderDefault
+	}
+	for _, b := range m.Providers {
+		if b.Provider == provider {
+			return b.Surface
+		}
+	}
+	return providers.SurfaceProviderDefault
+}
+
+// TranslationFamilyFor returns the wire family a request for (provider, id)
+// is emitted in: the binding's surface when it names one, else the provider's.
+func TranslationFamilyFor(provider, id string) providers.TranslationFamily {
+	return SurfaceFor(provider, id).Family(provider)
 }
 
 // PriceFor returns the per-(provider, model) pricing.

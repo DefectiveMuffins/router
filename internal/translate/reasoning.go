@@ -185,16 +185,18 @@ func reasoningOutputFloor(want int64, reasoning bool) int64 {
 	return want
 }
 
+// reasoningLevelRank orders the effort ladder nearestReasoningLevel clamps along.
+var reasoningLevelRank = map[string]int{"low": 0, "medium": 1, "high": 2, "max": 3, "xhigh": 4}
+
 func nearestReasoningLevel(levels []string, wanted string) string {
-	order := map[string]int{"low": 0, "medium": 1, "high": 2, "max": 3, "xhigh": 4}
-	wantedRank, known := order[wanted]
+	wantedRank, known := reasoningLevelRank[wanted]
 	if !known {
 		return levels[len(levels)-1]
 	}
 	best := levels[0]
 	bestDistance := 1 << 30
 	for _, candidate := range levels {
-		rank, known := order[candidate]
+		rank, known := reasoningLevelRank[candidate]
 		if !known {
 			continue
 		}

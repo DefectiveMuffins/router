@@ -649,6 +649,22 @@ func TestUseOpenAIResponsesAPI(t *testing.T) {
 		"gateways stay narrow even under the broad rollout: most mount no Responses surface")
 }
 
+func TestUseOpenAIResponsesAPI_Surface(t *testing.T) {
+	caps := router.Lookup("gpt-5.4-mini")
+	assert.True(t, translate.UseOpenAIResponsesAPI(translate.ResponsesRoute{
+		Provider: providers.ProviderOpenCode, Surface: providers.SurfaceResponses, ChatOnlyParams: true,
+	}), "a Responses-only binding has no chat surface to stay on")
+	assert.False(t, translate.UseOpenAIResponsesAPI(translate.ResponsesRoute{
+		Provider: providers.ProviderOpenAI, Surface: providers.SurfaceMessages, Broad: true,
+	}))
+	assert.False(t, translate.UseOpenAIResponsesAPI(translate.ResponsesRoute{
+		Provider: providers.ProviderOpenAI, Capabilities: caps, Surface: providers.SurfaceChatCompletions, Broad: true, HasTools: true,
+	}), "a chat binding stays on chat/completions even where the provider would promote")
+	assert.False(t, translate.UseOpenAIResponsesAPI(translate.ResponsesRoute{
+		Provider: providers.ProviderOpenCode, Surface: providers.SurfaceProviderDefault,
+	}))
+}
+
 // An Anthropic image block must survive the Responses emit as a typed
 // input_image part — a non-reasoning model now routes here too, so images can
 // no longer be skipped.

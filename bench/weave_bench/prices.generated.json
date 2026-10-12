@@ -1,5 +1,5 @@
 {
-  "pricing_version": "catalog-sha256:c4319170e42a2666",
+  "pricing_version": "catalog-sha256:e36eb56b5419ab88",
   "models": {
     "claude-fable-5": {
       "input_usd_per_million": 10,
@@ -431,6 +431,84 @@
       "input_usd_per_million": 1.25,
       "output_usd_per_million": 4.25,
       "cache_read_multiplier": 0.12,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/claude-haiku-5-5": {
+      "input_usd_per_million": 0.1,
+      "output_usd_per_million": 0.5,
+      "cache_read_multiplier": 0.1,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/deepseek-v4.1-flash": {
+      "input_usd_per_million": 0.15,
+      "output_usd_per_million": 0.6,
+      "cache_read_multiplier": 0.04666666666666667,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/glm-5.3": {
+      "input_usd_per_million": 1.4,
+      "output_usd_per_million": 4.4,
+      "cache_read_multiplier": 0.18571428571428572,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/glm-5.3-flash": {
+      "input_usd_per_million": 0.15,
+      "output_usd_per_million": 0.5,
+      "cache_read_multiplier": 0.2,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/gpt-6-luna": {
+      "input_usd_per_million": 0.1,
+      "output_usd_per_million": 0.5,
+      "cache_read_multiplier": 0.1,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/grok-4.7": {
+      "input_usd_per_million": 2,
+      "output_usd_per_million": 6,
+      "cache_read_multiplier": 0.25,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/kimi-k3": {
+      "input_usd_per_million": 3,
+      "output_usd_per_million": 15,
+      "cache_read_multiplier": 0.1,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/longcat-2.5-preview-free": {
+      "input_usd_per_million": 0,
+      "output_usd_per_million": 0,
+      "cache_read_multiplier": 0.5,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/mimo-v2.6-flash": {
+      "input_usd_per_million": 0.14,
+      "output_usd_per_million": 0.28,
+      "cache_read_multiplier": 0.02,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/mimo-v2.6-pro": {
+      "input_usd_per_million": 0.435,
+      "output_usd_per_million": 0.87,
+      "cache_read_multiplier": 0.00827586,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/qwen3.8-flash": {
+      "input_usd_per_million": 0.15,
+      "output_usd_per_million": 0.47,
+      "cache_read_multiplier": 0.5,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/qwen3.8-max": {
+      "input_usd_per_million": 2,
+      "output_usd_per_million": 6,
+      "cache_read_multiplier": 0.125,
+      "cache_write_multiplier": 1.25
+    },
+    "opencode/step-5-preview-free": {
+      "input_usd_per_million": 0,
+      "output_usd_per_million": 0,
+      "cache_read_multiplier": 0.5,
       "cache_write_multiplier": 1.25
     },
     "qwen/qwen3-235b-a22b-2507": {

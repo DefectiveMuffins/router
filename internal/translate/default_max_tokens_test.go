@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"testing"
 
+	"weave-os/router/internal/providers"
 	"weave-os/router/internal/router"
+	"weave-os/router/internal/router/catalog"
 	"weave-os/router/internal/translate"
 
 	"github.com/stretchr/testify/assert"
@@ -309,6 +311,95 @@ func TestOpenAISameFormat_ExplicitMaxTokensNotClampedTo8192ForGLM53(t *testing.T
 		}
 		out := parseAndEmit(t, body, "openai", opts)
 		assert.Equal(t, float64(64000), out["max_tokens"], model)
+	}
+}
+
+func TestOpenAISameFormat_ExplicitMaxTokensNotClampedTo8192ForOpenCodeChatRows(t *testing.T) {
+	for _, id := range []catalog.ModelID{catalog.ModelIDOpenCodeGLM53, catalog.ModelIDOpenCodeKimiK3, catalog.ModelIDOpenCodeDeepSeekV41Flash} {
+		body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"max_tokens":64000}`)
+		opts := translate.EmitOptions{
+			TargetModel:    id.String(),
+			TargetProvider: providers.ProviderOpenCode,
+			Capabilities:   router.Lookup(id.String()),
+		}
+		out := parseAndEmit(t, body, "openai", opts)
+		assert.Equal(t, float64(64000), out["max_tokens"], id)
+	}
+}
+
+func TestAnthropicEmit_ClampsOpenCodeMessagesRowsToOutputCap(t *testing.T) {
+	cases := map[catalog.ModelID]float64{
+		catalog.ModelIDOpenCodeClaudeHaiku55: 64000,
+		catalog.ModelIDOpenCodeQwen38Flash:   32768,
+	}
+	for id, want := range cases {
+		body := []byte(`{"model":"claude-x","messages":[{"role":"user","content":"hi"}],"max_tokens":100000}`)
+		opts := translate.EmitOptions{
+			TargetModel:    id.String(),
+			TargetProvider: providers.ProviderOpenCode,
+			Capabilities:   router.Lookup(id.String()),
+		}
+		out := parseAndEmit(t, body, "anthropic", opts)
+		assert.Equal(t, want, out["max_tokens"], id)
+	}
+}
+
+// Every OpenCode row's output cap, emitted on the surface the row is served on.
+// A row missing from modelMaxOutputTokens either passes an oversized budget
+// through (Messages) or falls to the 8192 default cap (chat and Responses).
+func TestOpenCodeRows_ClampToReviewedOutputCap(t *testing.T) {
+	caps := map[catalog.ModelID]int64{
+		catalog.ModelIDOpenCodeGrok47:               131072,
+		catalog.ModelIDOpenCodeGPT6Luna:             128000,
+		catalog.ModelIDOpenCodeClaudeHaiku55:        64000,
+		catalog.ModelIDOpenCodeGLM53:                131072,
+		catalog.ModelIDOpenCodeGLM53Flash:           131072,
+		catalog.ModelIDOpenCodeKimiK3:               131072,
+		catalog.ModelIDOpenCodeStep5PreviewFree:     32768,
+		catalog.ModelIDOpenCodeLongCat25PreviewFree: 32768,
+		catalog.ModelIDOpenCodeMiMoV26Pro:           65536,
+		catalog.ModelIDOpenCodeMiMoV26Flash:         65536,
+		catalog.ModelIDOpenCodeQwen38Max:            64000,
+		catalog.ModelIDOpenCodeQwen38Flash:          32768,
+		catalog.ModelIDOpenCodeDeepSeekV41Flash:     131072,
+	}
+	seen := 0
+	for _, m := range catalog.Models {
+		for _, b := range m.Providers {
+			if b.Provider == providers.ProviderOpenCode {
+				seen++
+				assert.Contains(t, caps, catalog.ModelID(m.ID), "every OpenCode row needs a reviewed output cap")
+			}
+		}
+	}
+	assert.Equal(t, len(caps), seen)
+
+	for id, want := range caps {
+		t.Run(id.String(), func(t *testing.T) {
+			opts := translate.EmitOptions{
+				TargetModel:    id.String(),
+				TargetProvider: providers.ProviderOpenCode,
+				Capabilities:   router.Lookup(id.String()),
+			}
+			switch catalog.SurfaceFor(providers.ProviderOpenCode, id.String()) {
+			case providers.SurfaceMessages:
+				body := []byte(`{"model":"claude-x","messages":[{"role":"user","content":"hi"}],"max_tokens":200000}`)
+				out := parseAndEmit(t, body, "anthropic", opts)
+				assert.Equal(t, float64(want), out["max_tokens"])
+			case providers.SurfaceResponses:
+				env, err := translate.ParseAnthropic([]byte(`{"model":"claude-x","messages":[{"role":"user","content":"hi"}],"max_tokens":200000}`))
+				require.NoError(t, err)
+				prep, err := env.PrepareOpenAIResponses(http.Header{}, opts)
+				require.NoError(t, err)
+				var out map[string]any
+				require.NoError(t, json.Unmarshal(prep.Body, &out))
+				assert.Equal(t, float64(want), out["max_output_tokens"])
+			default:
+				body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"max_tokens":200000}`)
+				out := parseAndEmit(t, body, "openai", opts)
+				assert.Equal(t, float64(want), out["max_tokens"])
+			}
+		})
 	}
 }
 

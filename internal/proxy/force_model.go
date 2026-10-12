@@ -94,6 +94,9 @@ var forceModelAliases = map[string]string{
 	"claude-haiku":  "claude-haiku-4-5",
 	"haiku-4-5":     "claude-haiku-4-5",
 	"haiku-4.5":     "claude-haiku-4-5",
+	// No first-party catalog row: the identity alias keeps the bare id on
+	// its vendor's prefix route instead of a plan row sharing its tail.
+	"claude-haiku-5-5": "claude-haiku-5-5",
 	// Generic GPT aliases follow the current flagship, not a pinned version;
 	// they pointed at gpt-5.5 until it was retired. Version-specific aliases
 	// (gpt-5-5*) deliberately still resolve to their exact model, which stays
@@ -160,6 +163,10 @@ var forceModelAliases = map[string]string{
 	"deepseek-flash":      "deepseek/deepseek-v4-flash",
 	"deepseek-v4-1-flash": "deepseek/deepseek-v4.1-flash",
 	"deepseek-v4p1-flash": "deepseek/deepseek-v4.1-flash",
+	// Tails a plan row also owns keep resolving to the vendor row.
+	"deepseek-v4.1-flash": "deepseek/deepseek-v4.1-flash",
+	"mimo-v2.6-pro":       "xiaomi/mimo-v2.6-pro",
+	"mimo-v2.6-flash":     "xiaomi/mimo-v2.6-flash",
 	"qwen":                "qwen/qwen3-coder",
 	"qwen-coder":          "qwen/qwen3-coder",
 	// qwen3.7-plus is retired from routing but still servable as passthrough;
