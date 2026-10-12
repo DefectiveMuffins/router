@@ -91,6 +91,20 @@ func managedSubscriptionEnrolled(ctx context.Context, provider subscriptions.Pro
 	return ok
 }
 
+// managedSubscriptionUpstreams maps each pool to the upstream its leased
+// token authenticates.
+var managedSubscriptionUpstreams = map[subscriptions.Provider]string{
+	subscriptions.ProviderClaude: providers.ProviderAnthropic,
+	subscriptions.ProviderCodex:  providers.ProviderOpenAI,
+}
+
+// managedSubscriptionRoutable reports whether provider's pool has an account
+// that can still serve; an exhausted pool must not admit its upstream.
+func managedSubscriptionRoutable(ctx context.Context, provider subscriptions.Provider) bool {
+	return managedSubscriptionEnrolled(ctx, provider) &&
+		managedSubscriptionPlanStatesFromContext(ctx)[provider] != SubscriptionPlanStateExhausted
+}
+
 func managedSubscriptionCanServe(ctx context.Context, provider, model string) bool {
 	poolProvider, eligible := managedSubscriptionProviderFromUpstream(provider, model)
 	return eligible && managedSubscriptionEnrolled(ctx, poolProvider)
